@@ -311,4 +311,62 @@ mod tests {
           ]
       );
   }
+
+  #[test]
+  fn pargin_multiblock() {
+      let input = r#"
+  [Conversation01]
+  saya:
+    Hello there!
+  player:
+    Hi!!!
+  ===
+
+  [[Choice]]
+  -> Option1
+  -> Option2
+  -> Option3
+  ===
+
+  [Conversation02]
+  hi:
+    Hola
+  ===
+  "#;
+
+      let tokens = dialog_block_lexer()
+          .parse(input)
+          .into_result()
+          .unwrap();
+
+      assert_eq!(
+          tokens,
+          vec![
+              Token::Block(Block::Conversation("Conversation01")),
+              
+              Token::Speaker("saya"),
+              Token::Text("Hello there!"),
+              
+              Token::Speaker("player"),
+              Token::Text("Hi!!!"),
+
+              Token::End,
+
+              Token::Block(Block::Choicer("Choice")),
+              
+              Token::Choice("Option1"),
+              Token::Choice("Option2"),
+              Token::Choice("Option3"),
+
+              Token::End,
+
+              Token::Block(Block::Conversation("Conversation02")),
+              
+              Token::Speaker("hi"),
+              Token::Text("Hola"),
+
+              Token::End,
+          ]
+      );
+  }
 }
