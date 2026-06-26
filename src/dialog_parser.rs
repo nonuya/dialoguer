@@ -2,33 +2,34 @@ use chumsky::prelude::*;
 
 #[derive(Debug)]
 pub enum Token<'a> {
-  Block(Block<'a>),
-  Speaker(&'a str),
-  Text(&'a str),
-  Choice(&'a str),
-  Command(Command<'a>),
-  End
+  Block(Block<'a>),      // Either [MyConversation] or [[MyChoicer]]
+  Speaker(&'a str),      // Saya:
+  Text(&'a str),         // This is a text
+  Choice(&'a str),       // -> My choice!!
+  Command(Command<'a>),  // @cmd arg
+  End                    // ===
 }
 
 #[derive(Debug)]
 pub enum Block<'a> {
-  Conversation(&'a str),
-  Choicer(&'a str),
+  Conversation(&'a str), // [MyConversation]
+  Choicer(&'a str),      // [[MyChoicer]]
 }
 
 #[derive(Debug)]
 pub enum Command<'a> {
-  Wait(f32),
-  Jump(Block<'a>),
-  Set{
+  Wait(f32),               // @wait 2.3
+  Jump(Block<'a>),         // @jump [Conversation], @jump [[Choicer]]
+  Set{                     // @set MyEnum.value 
     r#enum: &'a str,
     value: &'a str,
   },
-  SetMainChoicer(&'a str),
-  Next,
+  SetMainChoicer(&'a str), // @setmainchoicer [[MyChoicer]]
+  Next,                    // @next
 }
 
-pub fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token<'a>>> {
+/* This is the parser for a single Dialog Block */
+pub fn dialog_block_lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token<'a>>> {
   let parser_block_choicer = 
     just("[[")
       .ignore_then(
