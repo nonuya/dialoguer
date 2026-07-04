@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 chumsky = "0.13.0"
+cubism = { git = "https://github.com/Veykril/cubism-rs.git" }
