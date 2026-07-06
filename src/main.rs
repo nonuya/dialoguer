@@ -1,70 +1,44 @@
-use std::{fs::File, ops::Index, path::PathBuf};
+mod app;
 
 use glium::{
-  Display, Frame, IndexBuffer, Program, Surface, VertexBuffer,
+  Display,
   backend::glutin::SimpleWindowBuilder,
   glutin::surface::WindowSurface,
-  implement_uniform_block, implement_vertex,
   winit::{application::ApplicationHandler, window::Window},
 };
+use log::error;
 
-use log::debug;
-
-static VERTEX_SHADER_SRC: &str = r#"
-    #version 330 core
-
-    in vec2 position;
-
-    uniform mat4 transform;
-
-    void main() {
-        gl_Position = transform * vec4(position, 0.0, 1.0);
-    }
-"#;
-
-static FRAGMENT_SHADER_SRC: &str = r#"
-    #version 330 core
-
-    out vec4 color;
-
-    void main() {
-        color = vec4(1.0, 1.0, 1.0, 1.0);
-    }
-"#;
-
-struct App {
+struct MainWindow {
+  // This fields are optional because we need to create them later.
   window: Option<Window>,
   display: Option<Display<WindowSurface>>,
-  model: cubism::model::UserModel,
-  vertex_buffers: Vec<VertexBuffer<Vertex>>,
-  indices_buffers: Vec<IndexBuffer<u16>>,
-  program: Option<Program>,
+  app: app::App,
 }
 
-impl App {
-  fn new(model: cubism::model::UserModel) -> Self {
-    App {
+impl MainWindow {
+  fn new() -> Self {
+    MainWindow {
       window: None,
-      program: None,
       display: None,
-      model,
-      vertex_buffers: Vec::new(),
-      indices_buffers: Vec::new(),
+      app: app::App {},
     }
   }
 }
 
-impl ApplicationHandler for App {
+impl ApplicationHandler for MainWindow {
   fn resumed(&mut self, event_loop: &glium::winit::event_loop::ActiveEventLoop) {
     let (window, display) = SimpleWindowBuilder::new()
       .with_title("IVAV")
-      .with_inner_size(400, 400)
+      .with_inner_size(800, 400)
       .build(event_loop);
 
-    self.display = Some(display);
-    self.window = Some(window);
+    if let Err(e) = self.app.initialize(&display) {
+      error!("[MainWindow] {e}");
+      event_loop.exit();
+    }
 
-    self.init();
+    self.window = Some(window);
+    self.display = Some(display);
   }
 
   fn window_event(
@@ -79,8 +53,8 @@ impl ApplicationHandler for App {
       WindowEvent::RedrawRequested => {
         if let Some(display) = &self.display {
           let mut frame = display.draw();
-
-          self.draw(&mut frame);
+          
+          self.app.draw(&mut frame);
 
           frame.finish().unwrap();
         }
@@ -91,43 +65,12 @@ impl ApplicationHandler for App {
   }
 }
 
+/*
 impl App {
-  fn init(&mut self) {
-    let display = self.display.as_ref().unwrap();
-
-    self.program =
-      Some(Program::from_source(display, VERTEX_SHADER_SRC, FRAGMENT_SHADER_SRC, None).unwrap());
-
-    for cubism::core::Drawable {
-      vertex_positions,
-      indices,
-      index,
-      ..
-    } in self.model.drawables()
-    {
-      assert_eq!(index, self.vertex_buffers.len());
-
-      let buffer: Vec<_> = vertex_positions
-        .iter()
-        .map(|&p| Vertex { position: p })
-        .collect();
-
-      let vb = glium::VertexBuffer::dynamic(display, &buffer).unwrap();
-      let vi = glium::IndexBuffer::new(
-        display,
-        glium::index::PrimitiveType::TrianglesList,
-        &indices,
-      )
-      .unwrap();
-      self.vertex_buffers.push(vb);
-      self.indices_buffers.push(vi);
-    }
-  }
-
   fn draw(&self, frame: &mut Frame) {
     use cubism::core::DynamicFlags;
 
-    frame.clear_color(0.0, 0.0, 0.0, 1.0);
+    frame.clear_color_and_depth((0.0, 0.0, 0.0, 1.0), 1.0);
 
     let mut drawables: Vec<_> = self.model.drawables().collect();
     drawables.sort_unstable_by_key(|d| d.render_order);
@@ -140,32 +83,32 @@ impl App {
 
       let vb = &self.vertex_buffers[drawable.index];
       let ib = &self.indices_buffers[drawable.index];
+      let u_texture = &self.textures[drawable.texture_index as usize];
 
       if dflags.intersects(DynamicFlags::VERTEX_POSITIONS_CHANGED) {
         let vtx_buffer: Vec<_> = drawable
           .vertex_positions
           .iter()
-          .map(|&p| Vertex { position: p })
+          .zip(drawable.vertex_uvs)
+          .map(|(&pos, &uv)| Vertex { pos, uv })
           .collect();
         vb.write(&vtx_buffer);
       }
 
-      let transform = [
-        [1.0f32, 0.0, 0.0, 0.0],
-        [0.0, 1.0, 0.0, 0.0],
-        [0.0, 0.0, 1.0, 0.0],
-        [0.0, 0.0, 0.0, 1.0],
-      ];
-
       let params = glium::DrawParameters {
-        blend: glium::Blend::alpha_blending(),
-        polygon_mode: glium::draw_parameters::PolygonMode::Line,
-        backface_culling: glium::draw_parameters::BackfaceCullingMode::CullingDisabled,
+        depth: Depth {
+          test: DepthTest::IfLessOrEqual,
+          write: true,
+          ..Default::default()
+        },
+
+        blend: Blend::alpha_blending(),
+
         ..Default::default()
       };
 
       let uniforms = glium::uniform! {
-          transform: transform,
+          u_texture: u_texture,
       };
 
       frame
@@ -177,22 +120,19 @@ impl App {
 
 #[derive(Copy, Clone, Debug)]
 struct Vertex {
-  position: [f32; 2],
+  pos: [f32; 2],
+  uv: [f32; 2],
 }
-implement_vertex!(Vertex, position);
-implement_uniform_block!(Vertex, position);
+implement_vertex!(Vertex, pos, uv);
+implement_uniform_block!(Vertex, pos);
+*/
 
 fn main() -> anyhow::Result<()> {
   env_logger::init();
 
-  let model_path = PathBuf::from("assets/models/iav_013_2/");
-  let model_file = File::open(model_path.join("iav_013_2.model3.json"))?;
-  let model_json = cubism::json::model::Model3::from_reader(model_file)?;
-  let model = cubism::model::UserModel::from_model3(&model_path, &model_json)?;
-
-  let mut app = App::new(model);
+  let mut main_window = MainWindow::new();
   let event_loop = glium::winit::event_loop::EventLoop::builder().build()?;
-  event_loop.run_app(&mut app)?;
+  event_loop.run_app(&mut main_window)?;
 
   Ok(())
 }
