@@ -4,7 +4,7 @@ use glium::{Display, Frame, glutin::surface::WindowSurface};
 
 use crate::live2d::{
   self,
-  renderer::{draw_masks, draw_model, draw_model_test},
+  renderer::{draw_masks, draw_model},
 };
 
 pub struct App {
@@ -15,7 +15,7 @@ pub struct App {
 impl App {
   pub fn new(display: &Display<WindowSurface>) -> anyhow::Result<Self> {
     let shaders = live2d::shaders::load_global_shaders(display)?;
-    let model = live2d::model::Model::new(display, PathBuf::from("assets/models/iav_013_2"))?;
+    let model = live2d::model::Model::new(display, PathBuf::from("assets/models/iav_024_2"))?;
 
     Ok(Self { model, shaders })
   }

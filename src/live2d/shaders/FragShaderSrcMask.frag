@@ -20,4 +20,5 @@ void main()
     float maskVal = clipMask.r + clipMask.g + clipMask.b + clipMask.a;
     col_formask = col_formask * maskVal;
     gl_FragColor = col_formask;
+    //gl_FragColor = vec4(u_channelFlag.rgb, 1.0); // For debug
 }

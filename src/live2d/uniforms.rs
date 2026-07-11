@@ -1,5 +1,5 @@
 use glam::Mat4;
-use glium::uniforms::{UniformValue, Uniforms};
+use glium::uniforms::{Sampler, SamplerBehavior, UniformValue, Uniforms};
 
 #[derive(Copy, Clone)]
 pub struct CubismUniforms<'a> {
@@ -25,10 +25,40 @@ impl<'a> Uniforms for CubismUniforms<'a> {
   where
     F: FnMut(&str, UniformValue<'b>),
   {
-    set("s_texture0", UniformValue::Texture2d(self.s_texture0, None));
+    set(
+      "s_texture0",
+      UniformValue::Texture2d(
+        self.s_texture0,
+        Some(SamplerBehavior {
+          wrap_function: (
+            glium::uniforms::SamplerWrapFunction::Clamp,
+            glium::uniforms::SamplerWrapFunction::Clamp,
+            glium::uniforms::SamplerWrapFunction::Clamp,
+          ),
+          minify_filter: glium::uniforms::MinifySamplerFilter::Linear,
+          magnify_filter: glium::uniforms::MagnifySamplerFilter::Linear,
+          ..Default::default()
+        }),
+      ),
+    );
 
     if let Some(tex) = self.s_texture1 {
-      set("s_texture1", UniformValue::Texture2d(tex, None));
+      set(
+        "s_texture1",
+        UniformValue::Texture2d(
+          tex,
+          Some(SamplerBehavior {
+            wrap_function: (
+              glium::uniforms::SamplerWrapFunction::Clamp,
+              glium::uniforms::SamplerWrapFunction::Clamp,
+              glium::uniforms::SamplerWrapFunction::Clamp,
+            ),
+            minify_filter: glium::uniforms::MinifySamplerFilter::Linear,
+            magnify_filter: glium::uniforms::MagnifySamplerFilter::Linear,
+            ..Default::default()
+          }),
+        ),
+      );
     }
 
     if let Some(matrix) = self.u_matrix {
@@ -36,7 +66,10 @@ impl<'a> Uniforms for CubismUniforms<'a> {
     }
 
     if let Some(matrix) = self.u_clip_matrix {
-      set("u_clipMatrix", UniformValue::Mat4(matrix.to_cols_array_2d()));
+      set(
+        "u_clipMatrix",
+        UniformValue::Mat4(matrix.to_cols_array_2d()),
+      );
     }
 
     set("u_channelFlag", UniformValue::Vec4(self.u_channel_flag));

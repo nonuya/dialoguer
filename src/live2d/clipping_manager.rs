@@ -5,8 +5,8 @@ use glam::{Mat4, Vec3};
 use glium::{
   Blend, BlendingFunction, Display, DrawParameters, LinearBlendingFactor, Texture2d,
   framebuffer::{DefaultFramebuffer, SimpleFrameBuffer},
-  glutin::surface::WindowSurface,
-};
+  glutin::surface::WindowSurface };
+use log::info;
 
 use crate::live2d::rectf::RectF;
 
@@ -77,9 +77,11 @@ impl ClippingGraph {
 
       // O(n^2) but just once
       let find_same_clip = |masks: &[i32]| {
-        ccs_for_mask
-          .iter()
-          .position(|cc| cc.ids.len() == masks.len() && cc.ids.iter().all(|id| masks.contains(id)))
+        ccs_for_mask.iter().position(|cc| {
+          cc.ids.len() == masks.len()
+            && cc.ids.iter().all(|id| masks.contains(id))
+            && masks.iter().all(|id| cc.ids.contains(id))
+        })
       };
 
       let index = if let Some(idx) = find_same_clip(drawable.masks) {
@@ -243,6 +245,11 @@ impl ClippingGraph {
       }
     };
 
+    info!(
+      "Masks: {}, buffers: {}",
+      using_clip_count, mask_buffer_count
+    );
+
     setup_layout_bounds();
 
     for cc in &mut ccs_for_mask {
@@ -264,6 +271,11 @@ impl ClippingGraph {
         layout_bounds_on_tex_01,
         scale_x,
         scale_y,
+      );
+
+      info!(
+        "cc layout {:?} channel {:?} buffer {}",
+        cc.layout_bounds, cc.layout_channel_index, cc.buffer_index
       );
     }
 
@@ -381,7 +393,7 @@ impl OffscreenSurface {
   fn new(display: &Display<WindowSurface>, width: u32, height: u32) -> anyhow::Result<Self> {
     let texture = Texture2d::empty_with_format(
       display,
-      glium::texture::UncompressedFloatFormat::U8U8U8,
+      glium::texture::UncompressedFloatFormat::U8U8U8U8,
       glium::texture::MipmapsOption::NoMipmap,
       width,
       height,
@@ -432,14 +444,17 @@ impl ClippingManager {
     &self.graph.ccs_for_mask
   }
 
-  pub fn try_get_clipping_context_for_draw(&self, drawable_index: usize) -> Option<&ClippingContext> {
+  pub fn try_get_clipping_context_for_draw(
+    &self,
+    drawable_index: usize,
+  ) -> Option<&ClippingContext> {
     self
       .graph
       .ccs_for_draw
       .get(&drawable_index)
       .map(|&index| &self.graph.ccs_for_mask[index])
   }
-  
+
   pub fn get_offscreen_surface(&self, buffer_index: u32) -> &Texture2d {
     &self.offscreen_surfaces[buffer_index as usize].texture
   }

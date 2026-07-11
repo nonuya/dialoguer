@@ -1,5 +1,5 @@
 use cubism::core::{ConstantFlags, DynamicFlags};
-use glam::Mat4;
+use glam::{Mat4, vec3};
 use glium::{
   BackfaceCullingMode, Blend, BlendingFunction, DepthTest, Display, DrawParameters, Frame,
   LinearBlendingFactor, Rect, Surface,
@@ -17,10 +17,12 @@ const MASK_BLENDING: Blend = Blend {
   },
   alpha: BlendingFunction::Addition {
     source: LinearBlendingFactor::Zero,
-    destination: LinearBlendingFactor::OneMinusSourceAlpha,
+    destination: LinearBlendingFactor::OneMinusSourceColor,
   },
   constant_value: (0.0, 0.0, 0.0, 0.0),
 };
+
+// FIXME [11-07-2026]: Alpha channel isn't drawing
 
 pub fn draw_masks(
   display: &Display<WindowSurface>,
@@ -36,6 +38,7 @@ pub fn draw_masks(
     .collect();
 
   for offscreen in &mut offscreen_surfaces {
+    // Draw masks
     offscreen.clear_color(1.0, 1.0, 1.0, 1.0);
   }
 
@@ -98,88 +101,6 @@ pub fn draw_masks(
     }
   }
 }
-pub fn draw_model_test(
-  frame: &mut Frame,
-  display: &Display<WindowSurface>,
-  model: &live2d::model::Model,
-) {
-  use glium::program::Program;
-
-  let clipping_manager = model.get_clipping_manager();
-
-  let vertex_shader = r#"
-    #version 140
-
-    in vec2 a_position;
-    in vec2 a_texCoord;
-
-    out vec2 v_texCoord;
-
-    void main()
-    {
-        v_texCoord = a_texCoord;
-        gl_Position = vec4(a_position, 0.0, 1.0);
-    }
-  "#;
-
-  let fragment_shader = r#"
-    #version 140
-
-    uniform sampler2D tex;
-
-    in vec2 v_texCoord;
-
-    out vec4 color;
-
-    void main()
-    {
-        color = texture(tex, v_texCoord);
-    }
-  "#;
-
-  let shader = Program::from_source(display, vertex_shader, fragment_shader, None).unwrap();
-
-  let quad = vec![
-    Vertex {
-      a_position: [-1.0, -1.0],
-      a_texCoord: [0.0, 0.0],
-    },
-    Vertex {
-      a_position: [1.0, -1.0],
-      a_texCoord: [1.0, 0.0],
-    },
-    Vertex {
-      a_position: [1.0, 1.0],
-      a_texCoord: [1.0, 1.0],
-    },
-    Vertex {
-      a_position: [-1.0, 1.0],
-      a_texCoord: [0.0, 1.0],
-    },
-  ];
-
-  let vertex_buffer = glium::VertexBuffer::new(display, &quad).unwrap();
-
-  let indices = glium::index::NoIndices(glium::index::PrimitiveType::TriangleFan);
-
-  for surface in clipping_manager.get_offscreen_surfaces() {
-    let texture = surface.get_texture();
-
-    let uniforms = uniform! {
-      tex: texture,
-    };
-
-    frame
-      .draw(
-        &vertex_buffer,
-        indices,
-        &shader,
-        &uniforms,
-        &Default::default(),
-      )
-      .unwrap();
-  }
-}
 
 pub fn draw_model(
   frame: &mut Frame,
@@ -226,13 +147,14 @@ pub fn draw_model(
       blend: get_draw_blend_from_cflags(cflags),
       ..Default::default()
     };
+
     let uniforms = live2d::uniforms::CubismUniforms {
       s_texture0: model.get_texture(),
       s_texture1,
       u_clip_matrix,
-      u_matrix: Some(glam::Mat4::IDENTITY),
+      u_matrix: Some(glam::Mat4::from_scale(vec3(2.0, 2.0, 2.0))),
       u_channel_flag,
-      u_base_color: [1.0, 1.0, 1.0, 1.0],
+      u_base_color: [1.0, 1.0, 1.0, drawable.opacity],
       u_multiply_color: [1.0, 1.0, 1.0, 1.0],
       u_screen_color: [0.0, 0.0, 0.0, 0.0],
     };
