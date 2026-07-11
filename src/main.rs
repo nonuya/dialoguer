@@ -1,4 +1,5 @@
 mod app;
+mod live2d;
 
 use glium::{
   Display,
@@ -12,7 +13,7 @@ struct MainWindow {
   // This fields are optional because we need to create them later.
   window: Option<Window>,
   display: Option<Display<WindowSurface>>,
-  app: app::App,
+  app: Option<app::App>,
 }
 
 impl MainWindow {
@@ -20,7 +21,7 @@ impl MainWindow {
     MainWindow {
       window: None,
       display: None,
-      app: app::App {},
+      app: None,
     }
   }
 }
@@ -32,9 +33,12 @@ impl ApplicationHandler for MainWindow {
       .with_inner_size(800, 400)
       .build(event_loop);
 
-    if let Err(e) = self.app.initialize(&display) {
-      error!("[MainWindow] {e}");
-      event_loop.exit();
+    match app::App::new(&display) {
+      Ok(app) => self.app = Some(app),
+      Err(e) => {
+        error!("[MainWindow] {e}");
+        event_loop.exit();
+      }
     }
 
     self.window = Some(window);
@@ -52,11 +56,7 @@ impl ApplicationHandler for MainWindow {
     match event {
       WindowEvent::RedrawRequested => {
         if let Some(display) = &self.display {
-          let mut frame = display.draw();
-          
-          self.app.draw(&mut frame);
-
-          frame.finish().unwrap();
+          self.app.as_ref().unwrap().draw(display);
         }
       }
       WindowEvent::CloseRequested => event_loop.exit(),
@@ -118,13 +118,6 @@ impl App {
   }
 }
 
-#[derive(Copy, Clone, Debug)]
-struct Vertex {
-  pos: [f32; 2],
-  uv: [f32; 2],
-}
-implement_vertex!(Vertex, pos, uv);
-implement_uniform_block!(Vertex, pos);
 */
 
 fn main() -> anyhow::Result<()> {
