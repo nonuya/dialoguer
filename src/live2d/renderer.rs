@@ -20,22 +20,22 @@ pub fn draw_masks(
     },
     alpha: BlendingFunction::Addition {
       source: LinearBlendingFactor::Zero,
-      destination: LinearBlendingFactor::OneMinusSourceColor,
+      destination: LinearBlendingFactor::OneMinusSourceAlpha,
     },
     constant_value: (0.0, 0.0, 0.0, 0.0),
   };
 
   let clipping_manager = model.get_clipping_manager();
 
-  let mut offscreen_surfaces: Vec<_> = clipping_manager
+  let mut framebuffers: Vec<_> = clipping_manager
     .get_offscreens()
     .iter()
     .map(|o| SimpleFrameBuffer::new(display, o).unwrap())
     .collect();
 
-  for offscreen in &mut offscreen_surfaces {
+  for framebuffer in &mut framebuffers {
     // Draw masks
-    offscreen.clear_color(1.0, 1.0, 1.0, 1.0);
+    framebuffer.clear_color(1.0, 1.0, 1.0, 1.0);
   }
 
   for cc in clipping_manager.get_clipping_contexts_for_mask() {
@@ -89,7 +89,7 @@ pub fn draw_masks(
       };
 
       let buffer_index = cc.get_buffer_index() as usize;
-      let framebuffer  = &mut offscreen_surfaces[buffer_index];
+      let framebuffer  = &mut framebuffers[buffer_index];
 
       framebuffer
         .draw(vertices, uvs, &shaders.setup, &uniforms, &draw_parameters)

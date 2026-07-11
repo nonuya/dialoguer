@@ -396,8 +396,8 @@ impl ClippingManager {
           display,
           glium::texture::UncompressedFloatFormat::U8U8U8U8,
           glium::texture::MipmapsOption::NoMipmap,
-          config::MASK_BUFFER_COUNT,
-          config::MASK_BUFFER_COUNT,
+          config::MASK_SIZE,
+          config::MASK_SIZE,
         )
       })
       .collect::<anyhow::Result<_, _>>()?;
