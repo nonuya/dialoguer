@@ -65,61 +65,6 @@ impl ApplicationHandler for MainWindow {
   }
 }
 
-/*
-impl App {
-  fn draw(&self, frame: &mut Frame) {
-    use cubism::core::DynamicFlags;
-
-    frame.clear_color_and_depth((0.0, 0.0, 0.0, 1.0), 1.0);
-
-    let mut drawables: Vec<_> = self.model.drawables().collect();
-    drawables.sort_unstable_by_key(|d| d.render_order);
-
-    for drawable in &drawables {
-      let dflags = drawable.dynamic_flags;
-      if drawable.opacity <= 0.0 || !dflags.intersects(DynamicFlags::IS_VISIBLE) {
-        continue;
-      }
-
-      let vb = &self.vertex_buffers[drawable.index];
-      let ib = &self.indices_buffers[drawable.index];
-      let u_texture = &self.textures[drawable.texture_index as usize];
-
-      if dflags.intersects(DynamicFlags::VERTEX_POSITIONS_CHANGED) {
-        let vtx_buffer: Vec<_> = drawable
-          .vertex_positions
-          .iter()
-          .zip(drawable.vertex_uvs)
-          .map(|(&pos, &uv)| Vertex { pos, uv })
-          .collect();
-        vb.write(&vtx_buffer);
-      }
-
-      let params = glium::DrawParameters {
-        depth: Depth {
-          test: DepthTest::IfLessOrEqual,
-          write: true,
-          ..Default::default()
-        },
-
-        blend: Blend::alpha_blending(),
-
-        ..Default::default()
-      };
-
-      let uniforms = glium::uniform! {
-          u_texture: u_texture,
-      };
-
-      frame
-        .draw(vb, ib, self.program.as_ref().unwrap(), &uniforms, &params)
-        .unwrap();
-    }
-  }
-}
-
-*/
-
 fn main() -> anyhow::Result<()> {
   env_logger::init();
 

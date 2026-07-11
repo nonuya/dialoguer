@@ -1,5 +1,6 @@
 use glium::implement_vertex;
 
+#[allow(non_snake_case)]
 #[derive(Copy, Clone, Debug)]
 pub struct Vertex {
   pub a_position: [f32; 2],

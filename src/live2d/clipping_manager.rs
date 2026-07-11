@@ -1,14 +1,9 @@
+use cubism::model::UserModel;
+use glam::{Mat4, Vec3};
+use glium::{Display, Texture2d, glutin::surface::WindowSurface};
 use std::collections::HashMap;
 
-use cubism::{core::DynamicFlags, model::UserModel};
-use glam::{Mat4, Vec3};
-use glium::{
-  Blend, BlendingFunction, Display, DrawParameters, LinearBlendingFactor, Texture2d,
-  framebuffer::{DefaultFramebuffer, SimpleFrameBuffer},
-  glutin::surface::WindowSurface };
-use log::info;
-
-use crate::live2d::rectf::RectF;
+use crate::live2d::{config, rectf::RectF};
 
 #[derive(Default)]
 pub struct ClippingContext {
@@ -24,7 +19,7 @@ pub struct ClippingContext {
 }
 
 impl ClippingContext {
-  pub fn draw_indices(&self) -> &Vec<i32> {
+  pub fn get_draw_indices(&self) -> &Vec<i32> {
     &self.ids
   }
 
@@ -55,27 +50,25 @@ impl ClippingContext {
   }
 }
 
-// ==================================================================================================================
-// Is this a Graph?
 struct ClippingGraph {
   ccs_for_mask: Vec<ClippingContext>,
   ccs_for_draw: HashMap<usize, usize>, // <drawable_index, masks_index>
 }
 
 impl ClippingGraph {
+  // TODO: Transcipted Live2D code
   fn new(cubism: &UserModel, mask_buffer_count: u32) -> Self {
     let mut ccs_for_mask: Vec<ClippingContext> = Vec::new();
     let mut ccs_for_draw = HashMap::new();
 
     // =================================
-    // Graph
+    // Graph: O(n^3)?? Meh
     // =================================
     for drawable in cubism.drawables() {
       if !drawable.is_masked() {
         continue;
       }
 
-      // O(n^2) but just once
       let find_same_clip = |masks: &[i32]| {
         ccs_for_mask.iter().position(|cc| {
           cc.ids.len() == masks.len()
@@ -245,11 +238,7 @@ impl ClippingGraph {
       }
     };
 
-    info!(
-      "Masks: {}, buffers: {}",
-      using_clip_count, mask_buffer_count
-    );
-
+    // TODO: This is horrible but i dont care :D
     setup_layout_bounds();
 
     for cc in &mut ccs_for_mask {
@@ -272,11 +261,6 @@ impl ClippingGraph {
         scale_x,
         scale_y,
       );
-
-      info!(
-        "cc layout {:?} channel {:?} buffer {}",
-        cc.layout_bounds, cc.layout_channel_index, cc.buffer_index
-      );
     }
 
     Self {
@@ -285,6 +269,7 @@ impl ClippingGraph {
     }
   }
 
+  // TODO: A try of functional code
   fn calc_clipped_draw_total_bounds(cc: &ClippingContext, cubism: &UserModel) -> (bool, RectF) {
     let mut total_min_x = f32::INFINITY;
     let mut total_min_y = f32::INFINITY;
@@ -332,6 +317,7 @@ impl ClippingGraph {
     }
   }
 
+  // TODO: A try of functional code
   fn create_matrix_for_mask(
     is_right_handed: bool,
     tmp_bounds_on_model: RectF,
@@ -382,35 +368,9 @@ impl ClippingGraph {
   }
 }
 
-// ==================================================================================================================
-
-// ==================================================================================================================
-pub struct OffscreenSurface {
-  texture: Texture2d,
-}
-
-impl OffscreenSurface {
-  fn new(display: &Display<WindowSurface>, width: u32, height: u32) -> anyhow::Result<Self> {
-    let texture = Texture2d::empty_with_format(
-      display,
-      glium::texture::UncompressedFloatFormat::U8U8U8U8,
-      glium::texture::MipmapsOption::NoMipmap,
-      width,
-      height,
-    )?;
-
-    Ok(OffscreenSurface { texture })
-  }
-
-  pub fn get_texture(&self) -> &Texture2d {
-    &self.texture
-  }
-}
-// ==================================================================================================================
-
 pub struct ClippingManager {
   graph: ClippingGraph,
-  offscreen_surfaces: Vec<OffscreenSurface>,
+  offscreens: Vec<Texture2d>,
 }
 
 impl ClippingManager {
@@ -430,13 +390,21 @@ impl ClippingManager {
     );
 
     let graph = ClippingGraph::new(cubism, mask_buffer_count);
-    let offscreen_surfaces = (0..mask_buffer_count)
-      .map(|_| OffscreenSurface::new(display, 1024, 1024))
-      .collect::<anyhow::Result<Vec<_>>>()?;
+    let offscreens = (0..mask_buffer_count)
+      .map(|_| {
+        Texture2d::empty_with_format(
+          display,
+          glium::texture::UncompressedFloatFormat::U8U8U8U8,
+          glium::texture::MipmapsOption::NoMipmap,
+          config::MASK_BUFFER_COUNT,
+          config::MASK_BUFFER_COUNT,
+        )
+      })
+      .collect::<anyhow::Result<_, _>>()?;
 
     Ok(Self {
       graph,
-      offscreen_surfaces,
+      offscreens,
     })
   }
 
@@ -455,11 +423,12 @@ impl ClippingManager {
       .map(|&index| &self.graph.ccs_for_mask[index])
   }
 
-  pub fn get_offscreen_surface(&self, buffer_index: u32) -> &Texture2d {
-    &self.offscreen_surfaces[buffer_index as usize].texture
+  pub fn get_offscreens(&self) -> &Vec<Texture2d> {
+    &self.offscreens
   }
 
-  pub fn get_offscreen_surfaces(&self) -> &Vec<OffscreenSurface> {
-    &self.offscreen_surfaces
+  pub fn get_offscreen_by_idx(&self, buffer_index: u32) -> &Texture2d {
+    assert!(buffer_index < 4, "Buffer index must be until 3 'cause RGBA");
+    &self.offscreens[buffer_index as usize]
   }
 }

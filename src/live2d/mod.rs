@@ -1,7 +1,13 @@
 mod clipping_manager;
 mod rectf;
 mod uniforms;
-pub mod shaders;
-pub mod renderer;
-pub mod model;
 mod vertex;
+mod shaders;
+mod renderer;
+mod model;
+pub mod config;
+
+pub use shaders::GlobalShaders;
+pub use shaders::load_global_shaders;
+pub use model::Model;
+pub use renderer::{draw_masks, draw_model};

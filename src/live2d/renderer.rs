@@ -1,40 +1,36 @@
 use cubism::core::{ConstantFlags, DynamicFlags};
-use glam::{Mat4, vec3};
 use glium::{
   BackfaceCullingMode, Blend, BlendingFunction, DepthTest, Display, DrawParameters, Frame,
   LinearBlendingFactor, Rect, Surface,
-  framebuffer::{self, SimpleFrameBuffer},
+  framebuffer::SimpleFrameBuffer,
   glutin::surface::WindowSurface,
-  uniform,
 };
 
-use crate::live2d::{self, vertex::Vertex};
-
-const MASK_BLENDING: Blend = Blend {
-  color: BlendingFunction::Addition {
-    source: LinearBlendingFactor::Zero,
-    destination: LinearBlendingFactor::OneMinusSourceColor,
-  },
-  alpha: BlendingFunction::Addition {
-    source: LinearBlendingFactor::Zero,
-    destination: LinearBlendingFactor::OneMinusSourceColor,
-  },
-  constant_value: (0.0, 0.0, 0.0, 0.0),
-};
-
-// FIXME [11-07-2026]: Alpha channel isn't drawing
+use crate::live2d::{config, GlobalShaders, Model, uniforms::CubismUniforms};
 
 pub fn draw_masks(
   display: &Display<WindowSurface>,
-  model: &live2d::model::Model,
-  shaders: &live2d::shaders::GlobalShaders,
+  model: &Model,
+  shaders: &GlobalShaders,
 ) {
+  const MASK_BLENDING: Blend = Blend {
+    color: BlendingFunction::Addition {
+      source: LinearBlendingFactor::Zero,
+      destination: LinearBlendingFactor::OneMinusSourceColor,
+    },
+    alpha: BlendingFunction::Addition {
+      source: LinearBlendingFactor::Zero,
+      destination: LinearBlendingFactor::OneMinusSourceColor,
+    },
+    constant_value: (0.0, 0.0, 0.0, 0.0),
+  };
+
   let clipping_manager = model.get_clipping_manager();
 
   let mut offscreen_surfaces: Vec<_> = clipping_manager
-    .get_offscreen_surfaces()
+    .get_offscreens()
     .iter()
-    .map(|t| SimpleFrameBuffer::new(display, t.get_texture()).unwrap())
+    .map(|o| SimpleFrameBuffer::new(display, o).unwrap())
     .collect();
 
   for offscreen in &mut offscreen_surfaces {
@@ -43,7 +39,7 @@ pub fn draw_masks(
   }
 
   for cc in clipping_manager.get_clipping_contexts_for_mask() {
-    for &clip_draw_index in cc.draw_indices() {
+    for &clip_draw_index in cc.get_draw_indices() {
       let clip_draw_index = clip_draw_index as usize;
       let dflags = model.get_drawable_dynamic_flag(clip_draw_index);
 
@@ -51,20 +47,20 @@ pub fn draw_masks(
         continue;
       }
 
-      let s_texture0 = model.get_texture();
-      let vertices = model.get_drawable_vertices(clip_draw_index);
-      let uvs = model.get_drawable_indices(clip_draw_index);
+      let s_texture0     = model.get_texture();
+      let vertices       = model.get_drawable_vertices(clip_draw_index);
+      let uvs            = model.get_drawable_indices(clip_draw_index);
       let u_channel_flag = cc.get_color_channel();
-      let u_clip_matrix = Some(cc.get_matrix_for_mask().clone());
-      let layout_bounds = cc.get_layout_bounds();
-      let u_base_color = [
+      let u_clip_matrix  = Some(cc.get_matrix_for_mask().clone());
+      let layout_bounds  = cc.get_layout_bounds();
+      let u_base_color   = [
         layout_bounds.x * 2.0 - 1.0,
         layout_bounds.y * 2.0 - 1.0,
         layout_bounds.right() * 2.0 - 1.0,
         layout_bounds.bottom() * 2.0 - 1.0,
       ];
 
-      let uniforms = live2d::uniforms::CubismUniforms {
+      let uniforms = CubismUniforms {
         s_texture0,
         s_texture1: None,
         u_clip_matrix,
@@ -80,8 +76,8 @@ pub fn draw_masks(
         viewport: Some(Rect {
           left: 0,
           bottom: 0,
-          width: 1024,
-          height: 1024,
+          width: config::MASK_SIZE,
+          height: config::MASK_SIZE,
         }),
         depth: glium::Depth {
           test: DepthTest::Overwrite,
@@ -93,7 +89,7 @@ pub fn draw_masks(
       };
 
       let buffer_index = cc.get_buffer_index() as usize;
-      let framebuffer = &mut offscreen_surfaces[buffer_index];
+      let framebuffer  = &mut offscreen_surfaces[buffer_index];
 
       framebuffer
         .draw(vertices, uvs, &shaders.setup, &uniforms, &draw_parameters)
@@ -104,10 +100,11 @@ pub fn draw_masks(
 
 pub fn draw_model(
   frame: &mut Frame,
-  model: &live2d::model::Model,
-  shaders: &live2d::shaders::GlobalShaders,
+  model: &Model,
+  shaders: &GlobalShaders,
 ) {
   let clipping_manager = model.get_clipping_manager();
+
   for drawable in model.get_sorted_drawables() {
     let dflags = drawable.dynamic_flags;
     let cflags = drawable.constant_flags;
@@ -120,7 +117,7 @@ pub fn draw_model(
       if let Some(cc) = clipping_manager.try_get_clipping_context_for_draw(drawable.index) {
         (
           true,
-          Some(clipping_manager.get_offscreen_surface(cc.get_buffer_index())),
+          Some(clipping_manager.get_offscreen_by_idx(cc.get_buffer_index())),
           cc.get_color_channel(),
           Some(cc.get_matrix_for_draw().clone()),
         )
@@ -129,7 +126,6 @@ pub fn draw_model(
       };
 
     let inverted_mask = cflags.intersects(ConstantFlags::IS_INVERTED_MASK);
-
     let program = if masked {
       if inverted_mask {
         &shaders.inverted_mask
@@ -140,21 +136,24 @@ pub fn draw_model(
       &shaders.normal
     };
 
-    let vertices = model.get_drawable_vertices(drawable.index);
-    let uvs = model.get_drawable_indices(drawable.index);
+    let vertices     = model.get_drawable_vertices(drawable.index);
+    let uvs          = model.get_drawable_indices(drawable.index);
+    let s_texture0   = model.get_texture();
+    let u_matrix     = Some(glam::Mat4::IDENTITY); // TODO: Change this
+    let u_base_color = [1.0, 1.0, 1.0, drawable.opacity];
 
     let draw_parameters = DrawParameters {
       blend: get_draw_blend_from_cflags(cflags),
       ..Default::default()
     };
 
-    let uniforms = live2d::uniforms::CubismUniforms {
-      s_texture0: model.get_texture(),
+    let uniforms = CubismUniforms {
+      s_texture0,
       s_texture1,
       u_clip_matrix,
-      u_matrix: Some(glam::Mat4::from_scale(vec3(2.0, 2.0, 2.0))),
+      u_matrix,
       u_channel_flag,
-      u_base_color: [1.0, 1.0, 1.0, drawable.opacity],
+      u_base_color,
       u_multiply_color: [1.0, 1.0, 1.0, 1.0],
       u_screen_color: [0.0, 0.0, 0.0, 0.0],
     };

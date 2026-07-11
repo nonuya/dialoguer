@@ -1,5 +1,5 @@
 use glam::Mat4;
-use glium::uniforms::{Sampler, SamplerBehavior, UniformValue, Uniforms};
+use glium::uniforms::{SamplerBehavior, UniformValue, Uniforms};
 
 #[derive(Copy, Clone)]
 pub struct CubismUniforms<'a> {

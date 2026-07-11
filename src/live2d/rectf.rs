@@ -1,4 +1,4 @@
-#[derive(Default, Debug)]
+#[derive(Default)]
 pub struct RectF {
   pub x: f32,
   pub y: f32,
