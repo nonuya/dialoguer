@@ -1,217 +1,321 @@
+use crate::live2d::{Model, config, shaders::GlobalShaders};
 use cubism::core::{ConstantFlags, DynamicFlags};
-use glium::{
-  BackfaceCullingMode, Blend, BlendingFunction, DepthTest, Display, DrawParameters, Frame,
-  LinearBlendingFactor, Rect, Surface,
-  framebuffer::SimpleFrameBuffer,
-  glutin::surface::WindowSurface,
-};
+use glow::HasContext;
+use std::rc::Rc;
 
-use crate::live2d::{config, GlobalShaders, Model, uniforms::CubismUniforms};
+pub struct Renderer {
+  shaders: GlobalShaders,
+  gl: Rc<glow::Context>,
+}
 
-pub fn draw_masks(
-  display: &Display<WindowSurface>,
-  model: &Model,
-  shaders: &GlobalShaders,
-) {
-  const MASK_BLENDING: Blend = Blend {
-    color: BlendingFunction::Addition {
-      source: LinearBlendingFactor::Zero,
-      destination: LinearBlendingFactor::OneMinusSourceColor,
-    },
-    alpha: BlendingFunction::Addition {
-      source: LinearBlendingFactor::Zero,
-      destination: LinearBlendingFactor::OneMinusSourceAlpha,
-    },
-    constant_value: (0.0, 0.0, 0.0, 0.0),
-  };
+impl Renderer {
+  pub fn new(gl: Rc<glow::Context>) -> anyhow::Result<Self> {
+    let shaders = GlobalShaders::new(&gl)?;
 
-  let clipping_manager = model.get_clipping_manager();
-
-  let mut framebuffers: Vec<_> = clipping_manager
-    .get_offscreens()
-    .iter()
-    .map(|o| SimpleFrameBuffer::new(display, o).unwrap())
-    .collect();
-
-  for framebuffer in &mut framebuffers {
-    // Draw masks
-    framebuffer.clear_color(1.0, 1.0, 1.0, 1.0);
+    Ok(Self { gl, shaders })
   }
 
-  for cc in clipping_manager.get_clipping_contexts_for_mask() {
-    for &clip_draw_index in cc.get_draw_indices() {
-      let clip_draw_index = clip_draw_index as usize;
-      let dflags = model.get_drawable_dynamic_flag(clip_draw_index);
+  pub fn draw(&self, model: &Model, mvp: &glam::Mat4) {
+    self.draw_masks(model);
+    self.draw_model(model, mvp);
+  }
 
-      if !dflags.intersects(DynamicFlags::VERTEX_POSITIONS_CHANGED) {
+  fn draw_masks(&self, model: &Model) {
+    let clipping_manager = model.get_clipping_manager();
+
+    unsafe {
+      self.gl.disable(glow::DEPTH_TEST);
+      self.gl.disable(glow::CULL_FACE);
+
+      self.gl.enable(glow::BLEND);
+
+      // MASK_BLENDING
+      self
+        .gl
+        .blend_equation_separate(glow::FUNC_ADD, glow::FUNC_ADD);
+
+      self.gl.blend_func_separate(
+        glow::ZERO,
+        glow::ONE_MINUS_SRC_COLOR,
+        glow::ZERO,
+        glow::ONE_MINUS_SRC_ALPHA,
+      );
+    }
+
+    // limpiar todos los framebuffers de máscara
+    for offscreen in clipping_manager.get_offscreens() {
+      unsafe {
+        self
+          .gl
+          .bind_framebuffer(glow::FRAMEBUFFER, Some(offscreen.framebuffer));
+
+        self
+          .gl
+          .viewport(0, 0, config::MASK_SIZE as i32, config::MASK_SIZE as i32);
+
+        self.gl.clear_color(1.0, 1.0, 1.0, 1.0);
+        self.gl.clear(glow::COLOR_BUFFER_BIT);
+      }
+    }
+
+    for cc in clipping_manager.get_clipping_contexts_for_mask() {
+      for &draw_index in cc.get_draw_indices() {
+        let draw_index = draw_index as usize;
+
+        let dflags = model.get_drawable_dynamic_flag(draw_index);
+
+        if !dflags.intersects(DynamicFlags::VERTEX_POSITIONS_CHANGED) {
+          continue;
+        }
+
+        let mesh = model.get_mesh_by_indice(draw_index);
+
+        unsafe {
+          //-------------------------
+          // framebuffer
+          //-------------------------
+
+          let fb = clipping_manager.get_offscreens()[cc.get_buffer_index() as usize].framebuffer;
+
+          self.gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fb));
+
+          self
+            .gl
+            .viewport(0, 0, config::MASK_SIZE as i32, config::MASK_SIZE as i32);
+
+          //-------------------------
+          // shader
+          //-------------------------
+          let shader = &self.shaders.setup;
+
+          self.gl.use_program(Some(shader.program));
+
+          //-------------------------
+          // texture
+          //-------------------------
+          self.gl.active_texture(glow::TEXTURE0);
+
+          self
+            .gl
+            .bind_texture(glow::TEXTURE_2D, Some(*model.get_texture()));
+
+          self.gl.uniform_1_i32(shader.texture0.as_ref(), 0);
+
+          //-------------------------
+          // uniforms
+          //-------------------------
+          self.gl.uniform_matrix_4_f32_slice(
+            shader.clip_matrix.as_ref(),
+            false,
+            cc.get_matrix_for_mask().as_ref(),
+          );
+
+          let bounds = cc.get_layout_bounds();
+
+          self.gl.uniform_4_f32(
+            shader.base_color.as_ref(),
+            bounds.x * 2.0 - 1.0,
+            bounds.y * 2.0 - 1.0,
+            bounds.right() * 2.0 - 1.0,
+            bounds.bottom() * 2.0 - 1.0,
+          );
+
+          let c = cc.get_color_channel();
+
+          self
+            .gl
+            .uniform_4_f32(shader.channel_flag.as_ref(), c[0], c[1], c[2], c[3]);
+
+          self
+            .gl
+            .uniform_4_f32(shader.multiply_color.as_ref(), 1.0, 1.0, 1.0, 1.0);
+
+          self
+            .gl
+            .uniform_4_f32(shader.screen_color.as_ref(), 0.0, 0.0, 0.0, 0.0);
+
+          mesh.draw(&self.gl);
+        }
+      }
+    }
+
+    unsafe {
+      self.gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+    }
+  }
+
+  fn draw_model(&self, model: &Model, mvp: &glam::Mat4) {
+    let clipping_manager = model.get_clipping_manager();
+
+    unsafe {
+      self.gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+
+      // self.gl.viewport(0, 0, width as i32, height as i32);
+
+      self.gl.enable(glow::BLEND);
+      self.gl.disable(glow::DEPTH_TEST);
+      self.gl.disable(glow::CULL_FACE);
+
+      self.gl.clear_color(0.0, 0.0, 0.0, 1.0);
+      self.gl.clear(glow::COLOR_BUFFER_BIT);
+    }
+
+    for drawable in model.get_sorted_drawables() {
+      let dflags = drawable.dynamic_flags;
+      let cflags = drawable.constant_flags;
+
+      if drawable.opacity <= 0.0 || !dflags.intersects(DynamicFlags::IS_VISIBLE) {
         continue;
       }
 
-      let s_texture0     = model.get_texture();
-      let vertices       = model.get_drawable_vertices(clip_draw_index);
-      let uvs            = model.get_drawable_indices(clip_draw_index);
-      let u_channel_flag = cc.get_color_channel();
-      let u_clip_matrix  = Some(cc.get_matrix_for_mask().clone());
-      let layout_bounds  = cc.get_layout_bounds();
-      let u_base_color   = [
-        layout_bounds.x * 2.0 - 1.0,
-        layout_bounds.y * 2.0 - 1.0,
-        layout_bounds.right() * 2.0 - 1.0,
-        layout_bounds.bottom() * 2.0 - 1.0,
-      ];
+      //----------------------------------
+      // Shader
+      //----------------------------------
+      let (shader, mask_texture, clip_matrix, channel_flag) =
+        if let Some(cc) = clipping_manager.try_get_clipping_context_for_draw(drawable.index) {
+          let shader = if cflags.intersects(ConstantFlags::IS_INVERTED_MASK) {
+            &self.shaders.inverted_mask
+          } else {
+            &self.shaders.masked
+          };
 
-      let uniforms = CubismUniforms {
-        s_texture0,
-        s_texture1: None,
-        u_clip_matrix,
-        u_matrix: None,
-        u_channel_flag,
-        u_base_color,
-        u_multiply_color: [1.0, 1.0, 1.0, 1.0],
-        u_screen_color: [0.0, 0.0, 0.0, 0.0],
-      };
+          (
+            shader,
+            Some(clipping_manager.get_offscreen_by_idx(cc.get_buffer_index())),
+            Some(cc.get_matrix_for_draw()),
+            cc.get_color_channel(),
+          )
+        } else {
+          (&self.shaders.normal, None, None, [0.0; 4])
+        };
 
-      let draw_parameters = DrawParameters {
-        blend: MASK_BLENDING,
-        viewport: Some(Rect {
-          left: 0,
-          bottom: 0,
-          width: config::MASK_SIZE,
-          height: config::MASK_SIZE,
-        }),
-        depth: glium::Depth {
-          test: DepthTest::Overwrite,
-          write: false,
-          ..Default::default()
-        },
-        backface_culling: BackfaceCullingMode::CullingDisabled,
-        ..Default::default()
-      };
-
-      let buffer_index = cc.get_buffer_index() as usize;
-      let framebuffer  = &mut framebuffers[buffer_index];
-
-      framebuffer
-        .draw(vertices, uvs, &shaders.setup, &uniforms, &draw_parameters)
-        .unwrap();
-    }
-  }
-}
-
-pub fn draw_model(
-  frame: &mut Frame,
-  model: &Model,
-  shaders: &GlobalShaders,
-) {
-  let clipping_manager = model.get_clipping_manager();
-
-  for drawable in model.get_sorted_drawables() {
-    let dflags = drawable.dynamic_flags;
-    let cflags = drawable.constant_flags;
-
-    if drawable.opacity <= 0.0 || !dflags.intersects(DynamicFlags::IS_VISIBLE) {
-      continue;
-    }
-
-    let (masked, s_texture1, u_channel_flag, u_clip_matrix) =
-      if let Some(cc) = clipping_manager.try_get_clipping_context_for_draw(drawable.index) {
-        (
-          true,
-          Some(clipping_manager.get_offscreen_by_idx(cc.get_buffer_index())),
-          cc.get_color_channel(),
-          Some(cc.get_matrix_for_draw().clone()),
-        )
-      } else {
-        (false, None, [0.0, 0.0, 0.0, 0.0], None)
-      };
-
-    let inverted_mask = cflags.intersects(ConstantFlags::IS_INVERTED_MASK);
-    let program = if masked {
-      if inverted_mask {
-        &shaders.inverted_mask
-      } else {
-        &shaders.masked
+      //----------------------------------
+      // Blend
+      //----------------------------------
+      unsafe {
+        Self::set_blend_mode(&self.gl, cflags);
       }
-    } else {
-      &shaders.normal
-    };
 
-    let vertices     = model.get_drawable_vertices(drawable.index);
-    let uvs          = model.get_drawable_indices(drawable.index);
-    let s_texture0   = model.get_texture();
-    let u_matrix     = Some(glam::Mat4::IDENTITY); // TODO: Change this
-    let u_base_color = [1.0, 1.0, 1.0, drawable.opacity];
+      //----------------------------------
+      // Actualizar VBO
+      //----------------------------------
 
-    let draw_parameters = DrawParameters {
-      blend: get_draw_blend_from_cflags(cflags),
-      ..Default::default()
-    };
+      /*unsafe {
+        self.gl.bind_buffer(glow::ARRAY_BUFFER, Some(mesh.vbo));
 
-    let uniforms = CubismUniforms {
-      s_texture0,
-      s_texture1,
-      u_clip_matrix,
-      u_matrix,
-      u_channel_flag,
-      u_base_color,
-      u_multiply_color: [1.0, 1.0, 1.0, 1.0],
-      u_screen_color: [0.0, 0.0, 0.0, 0.0],
-    };
+        self
+          .gl
+          .buffer_sub_data_u8_slice(glow::ARRAY_BUFFER, 0, bytemuck::cast_slice(vertices));
+      }*/
 
-    frame
-      .draw(vertices, uvs, program, &uniforms, &draw_parameters)
-      .unwrap();
+      // let matrix = glam::Mat4::from_translation(vec3(0.0, -3.0, 0.0)) * glam::Mat4::from_scale(vec3(10.0, 10.0, 1.0));
+
+      //----------------------------------
+      // Program
+      //----------------------------------
+      unsafe {
+        self.gl.use_program(Some(shader.program));
+
+        self.gl.uniform_matrix_4_f32_slice(
+          shader.matrix.as_ref(),
+          false,
+          mvp.as_ref(),
+        );
+
+        self
+          .gl
+          .uniform_4_f32(shader.base_color.as_ref(), 1.0, 1.0, 1.0, drawable.opacity);
+
+        self
+          .gl
+          .uniform_4_f32(shader.multiply_color.as_ref(), 1.0, 1.0, 1.0, 1.0);
+
+        self
+          .gl
+          .uniform_4_f32(shader.screen_color.as_ref(), 0.0, 0.0, 0.0, 0.0);
+
+        self.gl.uniform_4_f32(
+          shader.channel_flag.as_ref(),
+          channel_flag[0],
+          channel_flag[1],
+          channel_flag[2],
+          channel_flag[3],
+        );
+      }
+
+      //----------------------------------
+      // Textura principal
+      //----------------------------------
+      unsafe {
+        self.gl.active_texture(glow::TEXTURE0);
+
+        self
+          .gl
+          .bind_texture(glow::TEXTURE_2D, Some(*model.get_texture()));
+
+        self.gl.uniform_1_i32(shader.texture0.as_ref(), 0);
+      }
+
+      //----------------------------------
+      // Textura de máscara
+      //----------------------------------
+
+      if let Some(mask) = mask_texture {
+        unsafe {
+          self.gl.active_texture(glow::TEXTURE1);
+
+          self.gl.bind_texture(glow::TEXTURE_2D, Some(mask.texture));
+
+          self.gl.uniform_1_i32(shader.texture1.as_ref(), 1);
+
+          self.gl.uniform_matrix_4_f32_slice(
+            shader.clip_matrix.as_ref(),
+            false,
+            clip_matrix.unwrap().as_ref(),
+          );
+        }
+      }
+
+      //----------------------------------
+      // Draw
+      //----------------------------------
+
+      model.get_mesh_by_indice(drawable.index).draw(&self.gl);
+    }
+  }
+
+  unsafe fn set_blend_mode(gl: &glow::Context, cflags: ConstantFlags) {
+    unsafe {
+      gl.blend_equation_separate(glow::FUNC_ADD, glow::FUNC_ADD);
+
+      if cflags.intersects(ConstantFlags::BLEND_ADDITIVE) {
+        gl.blend_func_separate(glow::ONE, glow::ONE, glow::ZERO, glow::ONE);
+      } else if cflags.intersects(ConstantFlags::BLEND_MULTIPLICATIVE) {
+        gl.blend_func_separate(
+          glow::DST_COLOR,
+          glow::ONE_MINUS_SRC_ALPHA,
+          glow::ZERO,
+          glow::ONE,
+        );
+      } else {
+        gl.blend_func_separate(
+          glow::ONE,
+          glow::ONE_MINUS_SRC_ALPHA,
+          glow::ONE,
+          glow::ONE_MINUS_SRC_ALPHA,
+        );
+      }
+    }
   }
 }
 
-fn get_draw_blend_from_cflags(cflags: ConstantFlags) -> Blend {
-  if cflags.intersects(ConstantFlags::BLEND_ADDITIVE) {
-    Blend {
-      color: BlendingFunction::Addition {
-        source: LinearBlendingFactor::One,
-
-        destination: LinearBlendingFactor::One,
-      },
-
-      alpha: BlendingFunction::Addition {
-        source: LinearBlendingFactor::Zero,
-
-        destination: LinearBlendingFactor::One,
-      },
-
-      constant_value: (0.0, 0.0, 0.0, 0.0),
-    }
-  } else if cflags.intersects(ConstantFlags::BLEND_MULTIPLICATIVE) {
-    Blend {
-      color: BlendingFunction::Addition {
-        source: LinearBlendingFactor::DestinationColor,
-
-        destination: LinearBlendingFactor::OneMinusSourceAlpha,
-      },
-
-      alpha: BlendingFunction::Addition {
-        source: LinearBlendingFactor::Zero,
-
-        destination: LinearBlendingFactor::One,
-      },
-
-      constant_value: (0.0, 0.0, 0.0, 0.0),
-    }
-  } else {
-    Blend {
-      color: BlendingFunction::Addition {
-        source: LinearBlendingFactor::One,
-
-        destination: LinearBlendingFactor::OneMinusSourceAlpha,
-      },
-
-      alpha: BlendingFunction::Addition {
-        source: LinearBlendingFactor::One,
-
-        destination: LinearBlendingFactor::OneMinusSourceAlpha,
-      },
-
-      constant_value: (0.0, 0.0, 0.0, 0.0),
+impl Drop for Renderer {
+  fn drop(&mut self) {
+    unsafe {
+      self.gl.delete_program(self.shaders.setup.program);
+      self.gl.delete_program(self.shaders.normal.program);
+      self.gl.delete_program(self.shaders.masked.program);
+      self.gl.delete_program(self.shaders.inverted_mask.program);
     }
   }
 }

@@ -1,27 +1,34 @@
-use std::path::PathBuf;
-
-use glium::{Display, glutin::surface::WindowSurface};
-
+use std::{path::PathBuf, rc::Rc};
+use glutin::display::GlDisplay;
 use crate::live2d;
 
 pub struct App {
+  gl: Rc<glow::Context>,
+  renderer: live2d::Renderer,
   model: live2d::Model,
-  shaders: live2d::GlobalShaders,
+  mvp: glam::Mat4,
 }
 
 impl App {
-  pub fn new(display: &Display<WindowSurface>) -> anyhow::Result<Self> {
-    let shaders = live2d::load_global_shaders(display)?;
-    let model = live2d::Model::new(display, PathBuf::from("assets/models/iav_024_2"))?;
+  pub fn new(display: &impl GlDisplay, width: u32, height: u32) -> anyhow::Result<Self> {
+    let gl = Rc::new(unsafe {
+      glow::Context::from_loader_function_cstr(|symbol| display.get_proc_address(symbol))
+    });
 
-    Ok(Self { model, shaders })
+    let renderer = live2d::Renderer::new(gl.clone())?;
+    let model = live2d::Model::new(gl.clone(), PathBuf::from("assets/models/iav_013_2"))?;
+    Ok(Self {
+      gl,
+      renderer,
+      model,
+      mvp: glam::Mat4::IDENTITY,
+    })
   }
 
-  pub fn draw(&self, display: &Display<WindowSurface>) {
-    live2d::draw_masks(display, &self.model, &self.shaders);
+  pub fn draw(&self) {
+    self.renderer.draw(&self.model, &self.mvp);
+  }
 
-    let mut frame = display.draw();
-    live2d::draw_model(&mut frame, &self.model, &self.shaders);
-    frame.finish().unwrap();
+  pub fn resize(&mut self, width: u32, height: u32) {
   }
 }
