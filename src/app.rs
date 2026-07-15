@@ -1,4 +1,6 @@
 use std::{path::PathBuf, rc::Rc};
+use glam::vec3;
+use glow::HasContext;
 use glutin::display::GlDisplay;
 use crate::live2d;
 
@@ -25,10 +27,19 @@ impl App {
     })
   }
 
+  pub fn update(&mut self, deltatime: f32) {
+    self.model.update(deltatime);
+  }
+
   pub fn draw(&self) {
     self.renderer.draw(&self.model, &self.mvp);
   }
 
   pub fn resize(&mut self, width: u32, height: u32) {
+    self.renderer.width = width as i32;
+    self.renderer.height = height as i32;
+    unsafe {
+      // self.gl.viewport(0, 0, width as i32, height as i32);
+    }
   }
 }

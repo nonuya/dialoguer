@@ -57,7 +57,7 @@ struct ClippingGraph {
 
 impl ClippingGraph {
   // TODO: Transcipted Live2D code
-  fn new(cubism: &UserModel, mask_buffer_count: u32) -> Self {
+  fn new(cubism: &UserModel) -> Self {
     let mut ccs_for_mask: Vec<ClippingContext> = Vec::new();
     let mut ccs_for_draw = HashMap::new();
 
@@ -95,11 +95,18 @@ impl ClippingGraph {
     }
     // =================================
 
-    for cc in &mut ccs_for_mask {
+    Self {
+      ccs_for_mask,
+      ccs_for_draw,
+    }
+  }
+
+  pub fn setup(&mut self, cubism: &UserModel, mask_buffer_count: u32) {
+    for cc in &mut self.ccs_for_mask {
       (cc.is_using, cc.all_clipped_draw_rect) = Self::calc_clipped_draw_total_bounds(cc, cubism);
     }
 
-    let using_clip_count = ccs_for_mask.iter().filter(|cc| cc.is_using).count() as u32;
+    let using_clip_count = self.ccs_for_mask.iter().filter(|cc| cc.is_using).count() as u32;
 
     assert!(using_clip_count != 0, "Unimplemented case here");
 
@@ -124,7 +131,7 @@ impl ClippingGraph {
           );
         }
 
-        for cc in &mut ccs_for_mask {
+        for cc in &mut self.ccs_for_mask {
           cc.layout_channel_index = 0;
           cc.layout_bounds = RectF {
             x: 0.0,
@@ -164,7 +171,7 @@ impl ClippingGraph {
 
           let mut assign_layout =
             |clip_index: usize, channel: u32, buffer: u32, x: f32, y: f32, w: f32, h: f32| {
-              let cc = &mut ccs_for_mask[clip_index];
+              let cc = &mut self.ccs_for_mask[clip_index];
 
               cc.layout_channel_index = channel;
               cc.buffer_index = buffer;
@@ -241,7 +248,7 @@ impl ClippingGraph {
     // TODO: This is horrible but i dont care :D
     setup_layout_bounds();
 
-    for cc in &mut ccs_for_mask {
+    for cc in &mut self.ccs_for_mask {
       const MARGIN: f32 = 0.05;
 
       let all_clipped_draw_rect = &cc.all_clipped_draw_rect;
@@ -261,11 +268,6 @@ impl ClippingGraph {
         scale_x,
         scale_y,
       );
-    }
-
-    Self {
-      ccs_for_mask,
-      ccs_for_draw,
     }
   }
 
@@ -401,7 +403,7 @@ impl ClippingManager {
       "Until now we just implemented for masked drawables"
     );
 
-    let graph = ClippingGraph::new(cubism, mask_buffer_count);
+    let graph = ClippingGraph::new(cubism);
 
     let offscreens = (0..mask_buffer_count)
       .map(|_| -> anyhow::Result<Offscreen> {
@@ -473,7 +475,15 @@ impl ClippingManager {
       })
       .collect::<anyhow::Result<Vec<_>>>()?;
 
-    Ok(Self { gl, graph, offscreens })
+    Ok(Self {
+      gl,
+      graph,
+      offscreens,
+    })
+  }
+
+  pub fn update_graph(&mut self, cubism: &UserModel) {
+    self.graph.setup(cubism, self.offscreens.len() as u32);
   }
 
   pub fn get_clipping_contexts_for_mask(&self) -> &Vec<ClippingContext> {

@@ -6,13 +6,15 @@ use std::rc::Rc;
 pub struct Renderer {
   shaders: GlobalShaders,
   gl: Rc<glow::Context>,
+  pub width: i32,
+  pub height: i32,
 }
 
 impl Renderer {
   pub fn new(gl: Rc<glow::Context>) -> anyhow::Result<Self> {
     let shaders = GlobalShaders::new(&gl)?;
 
-    Ok(Self { gl, shaders })
+    Ok(Self { gl, shaders, width: 800, height: 800 })
   }
 
   pub fn draw(&self, model: &Model, mvp: &glam::Mat4) {
@@ -67,8 +69,6 @@ impl Renderer {
         if !dflags.intersects(DynamicFlags::VERTEX_POSITIONS_CHANGED) {
           continue;
         }
-
-        let mesh = model.get_mesh_by_indice(draw_index);
 
         unsafe {
           //-------------------------
@@ -133,7 +133,9 @@ impl Renderer {
           self
             .gl
             .uniform_4_f32(shader.screen_color.as_ref(), 0.0, 0.0, 0.0, 0.0);
+          
 
+          let mesh = model.get_mesh_by_index(draw_index);
           mesh.draw(&self.gl);
         }
       }
@@ -150,13 +152,13 @@ impl Renderer {
     unsafe {
       self.gl.bind_framebuffer(glow::FRAMEBUFFER, None);
 
-      // self.gl.viewport(0, 0, width as i32, height as i32);
+      self.gl.viewport(0, 0, self.width, self.height);
 
       self.gl.enable(glow::BLEND);
       self.gl.disable(glow::DEPTH_TEST);
       self.gl.disable(glow::CULL_FACE);
 
-      self.gl.clear_color(0.0, 0.0, 0.0, 1.0);
+      self.gl.clear_color(0.0, 0.0, 0.0, 0.0);
       self.gl.clear(glow::COLOR_BUFFER_BIT);
     }
 
@@ -197,30 +199,14 @@ impl Renderer {
       }
 
       //----------------------------------
-      // Actualizar VBO
-      //----------------------------------
-
-      /*unsafe {
-        self.gl.bind_buffer(glow::ARRAY_BUFFER, Some(mesh.vbo));
-
-        self
-          .gl
-          .buffer_sub_data_u8_slice(glow::ARRAY_BUFFER, 0, bytemuck::cast_slice(vertices));
-      }*/
-
-      // let matrix = glam::Mat4::from_translation(vec3(0.0, -3.0, 0.0)) * glam::Mat4::from_scale(vec3(10.0, 10.0, 1.0));
-
-      //----------------------------------
       // Program
       //----------------------------------
       unsafe {
         self.gl.use_program(Some(shader.program));
 
-        self.gl.uniform_matrix_4_f32_slice(
-          shader.matrix.as_ref(),
-          false,
-          mvp.as_ref(),
-        );
+        self
+          .gl
+          .uniform_matrix_4_f32_slice(shader.matrix.as_ref(), false, mvp.as_ref());
 
         self
           .gl
@@ -279,8 +265,8 @@ impl Renderer {
       //----------------------------------
       // Draw
       //----------------------------------
-
-      model.get_mesh_by_indice(drawable.index).draw(&self.gl);
+      // model.get_mesh_by_index(drawable.index).draw(&self.gl);
+      model.get_mesh_by_index(drawable.index).draw(&self.gl);
     }
   }
 

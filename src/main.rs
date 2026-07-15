@@ -13,6 +13,7 @@ use glutin_winit::{DisplayBuilder, GlWindow};
 use log::{debug, error};
 use raw_window_handle::HasWindowHandle;
 use std::num::NonZeroU32;
+use std::time::Instant;
 use winit::application::ApplicationHandler;
 use winit::event::{KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
@@ -41,6 +42,16 @@ fn main() -> anyhow::Result<()> {
   event_loop.run_app(&mut main_window)?;
 
   Ok(())
+}
+
+struct MainWindow {
+  template: ConfigTemplateBuilder,
+  app: Option<App>,
+  // NOTE: `AppState` carries the `Window`, thus it should be dropped after everything else.
+  state: Option<AppState>,
+  gl_context: Option<PossiblyCurrentContext>,
+  gl_display: GlDisplayCreationState,
+  last_frame: Instant,
 }
 
 impl ApplicationHandler for MainWindow {
@@ -207,7 +218,16 @@ impl ApplicationHandler for MainWindow {
   fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
     if let Some(AppState { gl_surface, window }) = self.state.as_ref() {
       let gl_context = self.gl_context.as_ref().unwrap();
-      let app = self.app.as_ref().unwrap();
+      let app = self.app.as_mut().unwrap();
+        
+      let now = Instant::now();
+      let delta_time = now - self.last_frame;
+      self.last_frame = now;
+
+      let dt = delta_time.as_secs_f32();
+
+      app.update(dt);
+      
       app.draw();
       window.request_redraw();
 
@@ -261,15 +281,6 @@ enum GlDisplayCreationState {
   Init,
 }
 
-struct MainWindow {
-  template: ConfigTemplateBuilder,
-  app: Option<App>,
-  // NOTE: `AppState` carries the `Window`, thus it should be dropped after everything else.
-  state: Option<AppState>,
-  gl_context: Option<PossiblyCurrentContext>,
-  gl_display: GlDisplayCreationState,
-}
-
 impl MainWindow {
   fn new(template: ConfigTemplateBuilder, display_builder: DisplayBuilder) -> Self {
     Self {
@@ -278,6 +289,7 @@ impl MainWindow {
       gl_context: None,
       state: None,
       app: None,
+      last_frame: Instant::now(),
     }
   }
 }

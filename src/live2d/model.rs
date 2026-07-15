@@ -18,6 +18,7 @@ pub struct Model {
   cubism: UserModel,
   texture: glow::Texture,
   meshes: Vec<Mesh>,
+  motion: cubism::motion::Motion, // FIXME: Test
   clipping_manager: ClippingManager,
 }
 
@@ -75,13 +76,32 @@ impl Model {
 
     let clipping_manager = ClippingManager::new(gl.clone(), &cubism, config::MASK_BUFFER_COUNT)?;
 
+    let motion_path = &model_json.file_references.motions.idle[7].file;
+    let motion_path = model_path.join(motion_path);
+    debug!("Reading motion at '{}'", motion_path.display());
+    let mut motion = cubism::motion::Motion::from_motion3_json(motion_path)?;
+    motion.play();
+    motion.set_looped(true);
+
     Ok(Self {
       gl,
       cubism,
       texture,
       meshes,
       clipping_manager,
+      motion,
     })
+  }
+
+  pub fn update(&mut self, deltatime: f32) {
+    self.motion.tick(deltatime as f64);
+    self.motion.update(self.cubism.model_mut()).unwrap();
+    self.cubism.model_mut().update();
+   
+    self.clipping_manager.update_graph(&self.cubism);
+    for drawable in self.cubism.drawables() {
+      self.get_mesh_by_index(drawable.index).update(&self.gl, drawable);
+    }
   }
 
   pub fn get_clipping_manager(&self) -> &ClippingManager {
@@ -96,7 +116,7 @@ impl Model {
     &self.texture
   }
 
-  pub fn get_mesh_by_indice(&self, drawable_index: usize) -> &Mesh {
+  pub fn get_mesh_by_index(&self, drawable_index: usize) -> &Mesh {
     &self.meshes[drawable_index]
   }
 
@@ -207,6 +227,22 @@ impl Mesh {
         ebo,
         index_count: indices.len() as i32,
       })
+    }
+  }
+
+  pub fn update(&self, gl: &glow::Context, drawable: Drawable) {
+    let vertices: Vec<_> = drawable.vertex_positions
+      .iter()
+      .zip(drawable.vertex_uvs)
+      .map(|(&pos, &uv)| Vertex {pos, uv})
+      .collect();
+
+    unsafe {
+      gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
+
+      gl.buffer_sub_data_u8_slice(glow::ARRAY_BUFFER, 0, bytemuck::cast_slice(vertices.as_slice()));
+
+      gl.bind_buffer(glow::ARRAY_BUFFER, None);
     }
   }
 
