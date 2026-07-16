@@ -19,45 +19,20 @@ pub struct Model {
   meshes: Vec<Mesh>,
   clipping_manager: ClippingManager,
   parameters: HashMap<String, usize>,
-  motions: HashMap<String, Motion>, // FIXME: Dont put this here
 }
 
 impl Model {
-  pub fn new(gl: Rc<glow::Context>, model_path: PathBuf) -> anyhow::Result<Self> {
+  pub fn new(gl: Rc<glow::Context>, path: &PathBuf, model3: &cubism::json::model::Model3) -> anyhow::Result<Self> {
     // ==================================
     // CUBISM
     // ==================================
-    let model_name = model_path
-      .file_name()
-      .ok_or_else(|| anyhow::anyhow!("Fail to get model name from '{}'", model_path.display()))?;
-
-    let model_file = File::open(model_path.join(format!("{}.model3.json", model_name.display())))?;
-    let model_json = cubism::json::model::Model3::from_reader(model_file)?;
-    let cubism = UserModel::from_model3(&model_path, &model_json)?;
+    let cubism = UserModel::from_model3(path, model3)?;
     
     let parameters = cubism
       .parameters()
       .enumerate()
       .map(|(i, p)| (p.id.to_string(), i))
       .collect();
-
-    let motions = model_json
-      .file_references
-      .motions
-      .idle
-      .iter()
-      .map(|m| model_path.join(&m.file))
-      .map(|path| {
-        debug!("[Live2D] Loading Motion '{}'", path.display());
-        let name = path
-          .file_prefix()
-          .and_then(|p| p.to_str())
-          .context("Failed to get Motion name")?;
-        let motion = cubism::motion::Motion::from_motion3_json(&path)?;
-
-        Ok((name.to_string(), motion))
-      })
-    .collect::<anyhow::Result<HashMap<_,_>>>()?;
     // ==================================
 
     // ==================================
@@ -90,12 +65,12 @@ impl Model {
     // Texture2D
     // ==================================
     assert_eq!(
-      model_json.file_references.textures.len(),
+      model3.file_references.textures.len(),
       1,
       "Until now, Saltpeter-Art textures have just one single texture."
     );
-    let texture_path = &model_json.file_references.textures[0];
-    let texture = load_texture_from_astc_path(&gl, &model_path.join(texture_path))?;
+    let texture_path = &model3.file_references.textures[0];
+    let texture = load_texture_from_astc_path(&gl, &path.join(texture_path))?;
     // ==================================
 
     let clipping_manager = ClippingManager::new(gl.clone(), &cubism, config::MASK_BUFFER_COUNT)?;
@@ -107,16 +82,11 @@ impl Model {
       meshes,
       clipping_manager,
       parameters,
-      motions,
     })
   }
 
   pub fn apply_motion(&mut self, motion: &Motion) -> CubismResult<()> {
     motion.update(self.cubism.model_mut()) 
-  }
-
-  pub fn get_motions(&self) -> &HashMap<String, Motion> {
-    &self.motions
   }
 
   pub fn set_parameter_value(&mut self, id: &String, val: f32) -> bool {

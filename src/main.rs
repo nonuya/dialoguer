@@ -1,6 +1,7 @@
 mod app;
 mod live2d;
 mod dialog_parser;
+mod conversation_builder;
 
 use crate::app::App;
 use glutin::config::{Config, ConfigTemplateBuilder, GetGlConfig};

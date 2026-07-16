@@ -1,11 +1,12 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, path::PathBuf};
 
 use crate::live2d::Model;
+use anyhow::Context;
 use cubism::motion::Motion;
-use log::warn;
+use log::{debug, warn};
 
-pub struct Animator {
-  motion: Option<Motion>,
+pub struct Animator<'a> {
+  motion: Option<&'a Motion>,
   map: HashMap<String, Value>,
 }
 
@@ -21,7 +22,7 @@ impl Value {
   }
 }
 
-impl Animator {
+impl<'a> Animator<'a> {
   pub fn new() -> Self {
     Self {
       motion: None,
@@ -29,7 +30,7 @@ impl Animator {
     }
   }
 
-  pub fn play_motion(&mut self, mut motion: Motion, looped: bool) {
+  pub fn play_motion(&mut self, motion: &'a mut Motion, looped: bool) {
     motion.play();
     motion.set_looped(looped);
     self.motion = Some(motion);
@@ -59,10 +60,11 @@ impl Animator {
   }
 
   pub fn update(&mut self, deltatime: f32, model: &mut Model) {
-    if let Some(motion) = &mut self.motion {
+    /*
+    if let Some(motion) = self.motion.as_mut() {
       motion.tick(deltatime as f64);
       model.apply_motion(motion).unwrap();
-    }
+    }*/
 
     for (id, value) in &mut self.map {
       match value {
@@ -98,3 +100,58 @@ impl Animator {
     model.update_parameters();
   }
 }
+
+pub struct MotionManager(HashMap<String, Motion>);
+
+impl MotionManager {
+  pub fn new(path: &PathBuf, model3: &cubism::json::model::Model3) -> anyhow::Result<Self> {
+    let motions = model3
+      .file_references
+      .motions
+      .idle
+      .iter()
+      .map(|m| path.join(&m.file))
+      .map(|path| {
+        debug!("[Live2D] Loading Motion '{}'", path.display());
+        let name = path
+          .file_prefix()
+          .and_then(|p| p.to_str())
+          .context("Failed to get Motion name")?;
+        let motion = cubism::motion::Motion::from_motion3_json(&path)?;
+
+        Ok((name.to_string(), motion))
+      })
+    .collect::<anyhow::Result<HashMap<_,_>>>()?;
+
+    Ok(Self(motions))
+  }
+
+  pub fn get(&self, name: &str) -> Option<&Motion> {
+    self.0.get(name)
+  }
+}
+
+/*
+    let enum_map = HashMap::from([
+      (
+        "BlushType",
+        EnumType(HashMap::from([
+          (
+            "None",
+            vec![ParamValue("Param83", Value::smooth(0.0, 1.0))],
+          ),
+          (
+            "Half",
+            vec![ParamValue("Param83", Value::smooth(50.0, 1.0))],
+          ),
+          (
+            "On",
+            vec![ParamValue("Param83", Value::smooth(100.0, 1.0))],
+          ),
+        ])),
+      )
+    ]);
+ */
+pub type EnumValue = (String, Value);
+pub type EnumType = /*Values*/ HashMap<&'static str, Vec<EnumValue>>;
+pub type EnumMap = HashMap<String, EnumType>;
