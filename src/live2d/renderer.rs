@@ -6,15 +6,20 @@ use std::rc::Rc;
 pub struct Renderer {
   shaders: GlobalShaders,
   gl: Rc<glow::Context>,
-  pub width: i32,
-  pub height: i32,
+  width: u32,
+  height: u32,
 }
 
 impl Renderer {
   pub fn new(gl: Rc<glow::Context>) -> anyhow::Result<Self> {
     let shaders = GlobalShaders::new(&gl)?;
 
-    Ok(Self { gl, shaders, width: 800, height: 800 })
+    Ok(Self { gl, shaders, width: 0, height: 0 })
+  }
+
+  pub fn resize(&mut self, width: u32, height: u32) {
+    self.width = width;
+    self.height = height;
   }
 
   pub fn draw(&self, model: &Model, mvp: &glam::Mat4) {
@@ -63,7 +68,6 @@ impl Renderer {
     for cc in clipping_manager.get_clipping_contexts_for_mask() {
       for &draw_index in cc.get_draw_indices() {
         let draw_index = draw_index as usize;
-
         let dflags = model.get_drawable_dynamic_flag(draw_index);
 
         if !dflags.intersects(DynamicFlags::VERTEX_POSITIONS_CHANGED) {
@@ -75,7 +79,7 @@ impl Renderer {
           // framebuffer
           //-------------------------
 
-          let fb = clipping_manager.get_offscreens()[cc.get_buffer_index() as usize].framebuffer;
+          let fb = clipping_manager.get_offscreen_by_idx(cc.get_offscreen_index()).framebuffer;
 
           self.gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fb));
 
@@ -135,8 +139,7 @@ impl Renderer {
             .uniform_4_f32(shader.screen_color.as_ref(), 0.0, 0.0, 0.0, 0.0);
           
 
-          let mesh = model.get_mesh_by_index(draw_index);
-          mesh.draw(&self.gl);
+          model.get_mesh_by_index(draw_index).draw(&self.gl);
         }
       }
     }
@@ -152,7 +155,7 @@ impl Renderer {
     unsafe {
       self.gl.bind_framebuffer(glow::FRAMEBUFFER, None);
 
-      self.gl.viewport(0, 0, self.width, self.height);
+      self.gl.viewport(0, 0, self.width as i32, self.height as i32);
 
       self.gl.enable(glow::BLEND);
       self.gl.disable(glow::DEPTH_TEST);
@@ -183,7 +186,7 @@ impl Renderer {
 
           (
             shader,
-            Some(clipping_manager.get_offscreen_by_idx(cc.get_buffer_index())),
+            Some(clipping_manager.get_offscreen_by_idx(cc.get_offscreen_index())),
             Some(cc.get_matrix_for_draw()),
             cc.get_color_channel(),
           )

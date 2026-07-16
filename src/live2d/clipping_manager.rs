@@ -45,8 +45,8 @@ impl ClippingContext {
     &self.matrix_for_draw
   }
 
-  pub fn get_buffer_index(&self) -> u32 {
-    self.buffer_index
+  pub fn get_offscreen_index(&self) -> usize {
+    self.buffer_index as usize
   }
 }
 
@@ -403,77 +403,78 @@ impl ClippingManager {
       "Until now we just implemented for masked drawables"
     );
 
-    let graph = ClippingGraph::new(cubism);
+    let create_texture = || unsafe {
+      let texture = gl.create_texture().map_err(anyhow::Error::msg)?;
 
-    let offscreens = (0..mask_buffer_count)
-      .map(|_| -> anyhow::Result<Offscreen> {
-        unsafe {
-          let texture = gl.create_texture().map_err(anyhow::Error::msg)?;
+      gl.bind_texture(glow::TEXTURE_2D, Some(texture));
 
-          gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+      gl.tex_image_2d(
+        glow::TEXTURE_2D,
+        0,
+        glow::RGBA8 as i32,
+        config::MASK_SIZE as i32,
+        config::MASK_SIZE as i32,
+        0,
+        glow::RGBA,
+        glow::UNSIGNED_BYTE,
+        glow::PixelUnpackData::Slice(None),
+      );
 
-          gl.tex_image_2d(
-            glow::TEXTURE_2D,
-            0,
-            glow::RGBA8 as i32,
-            config::MASK_SIZE as i32,
-            config::MASK_SIZE as i32,
-            0,
-            glow::RGBA,
-            glow::UNSIGNED_BYTE,
-            glow::PixelUnpackData::Slice(None),
-          );
+      gl.tex_parameter_i32(
+        glow::TEXTURE_2D,
+        glow::TEXTURE_MIN_FILTER,
+        glow::LINEAR as i32,
+      );
 
-          gl.tex_parameter_i32(
-            glow::TEXTURE_2D,
-            glow::TEXTURE_MIN_FILTER,
-            glow::LINEAR as i32,
-          );
+      gl.tex_parameter_i32(
+        glow::TEXTURE_2D,
+        glow::TEXTURE_MAG_FILTER,
+        glow::LINEAR as i32,
+      );
 
-          gl.tex_parameter_i32(
-            glow::TEXTURE_2D,
-            glow::TEXTURE_MAG_FILTER,
-            glow::LINEAR as i32,
-          );
+      gl.tex_parameter_i32(
+        glow::TEXTURE_2D,
+        glow::TEXTURE_WRAP_S,
+        glow::CLAMP_TO_EDGE as i32,
+      );
 
-          gl.tex_parameter_i32(
-            glow::TEXTURE_2D,
-            glow::TEXTURE_WRAP_S,
-            glow::CLAMP_TO_EDGE as i32,
-          );
+      gl.tex_parameter_i32(
+        glow::TEXTURE_2D,
+        glow::TEXTURE_WRAP_T,
+        glow::CLAMP_TO_EDGE as i32,
+      );
 
-          gl.tex_parameter_i32(
-            glow::TEXTURE_2D,
-            glow::TEXTURE_WRAP_T,
-            glow::CLAMP_TO_EDGE as i32,
-          );
+      let framebuffer = gl.create_framebuffer().map_err(anyhow::Error::msg)?;
 
-          let framebuffer = gl.create_framebuffer().map_err(anyhow::Error::msg)?;
+      gl.bind_framebuffer(glow::FRAMEBUFFER, Some(framebuffer));
 
-          gl.bind_framebuffer(glow::FRAMEBUFFER, Some(framebuffer));
+      gl.framebuffer_texture_2d(
+        glow::FRAMEBUFFER,
+        glow::COLOR_ATTACHMENT0,
+        glow::TEXTURE_2D,
+        Some(texture),
+        0,
+      );
 
-          gl.framebuffer_texture_2d(
-            glow::FRAMEBUFFER,
-            glow::COLOR_ATTACHMENT0,
-            glow::TEXTURE_2D,
-            Some(texture),
-            0,
-          );
+      if gl.check_framebuffer_status(glow::FRAMEBUFFER) != glow::FRAMEBUFFER_COMPLETE {
+        anyhow::bail!("Framebuffer is incomplete");
+      }
 
-          if gl.check_framebuffer_status(glow::FRAMEBUFFER) != glow::FRAMEBUFFER_COMPLETE {
-            anyhow::bail!("Framebuffer is incomplete");
-          }
+      gl.bind_texture(glow::TEXTURE_2D, None);
+      gl.bind_framebuffer(glow::FRAMEBUFFER, None);
 
-          gl.bind_texture(glow::TEXTURE_2D, None);
-          gl.bind_framebuffer(glow::FRAMEBUFFER, None);
-
-          Ok(Offscreen {
-            texture,
-            framebuffer,
-          })
-        }
+      Ok(Offscreen {
+        texture,
+        framebuffer,
       })
+    };
+
+    let mut graph = ClippingGraph::new(cubism);
+    let offscreens = (0..mask_buffer_count)
+      .map(|_| {create_texture()})
       .collect::<anyhow::Result<Vec<_>>>()?;
+
+    graph.setup(cubism, mask_buffer_count);
 
     Ok(Self {
       gl,
@@ -505,9 +506,9 @@ impl ClippingManager {
     &self.offscreens
   }
 
-  pub fn get_offscreen_by_idx(&self, buffer_index: u32) -> &Offscreen {
+  pub fn get_offscreen_by_idx(&self, buffer_index: usize) -> &Offscreen {
     assert!(buffer_index < 4, "Buffer index must be until 3 'cause RGBA");
-    &self.offscreens[buffer_index as usize]
+    &self.offscreens[buffer_index]
   }
 }
 

@@ -1,10 +1,9 @@
-use std::{fs::File, path::PathBuf, rc::Rc};
+use std::{collections::HashMap, fs::File, path::PathBuf, rc::Rc};
 
 use anyhow::Context;
 use bytemuck::{Pod, Zeroable};
 use cubism::{
-  core::{Drawable, DynamicFlags},
-  model::UserModel,
+  core::{Drawable, DynamicFlags}, error::CubismResult, model::UserModel, motion::Motion
 };
 use glow::HasContext;
 use log::debug;
@@ -18,8 +17,8 @@ pub struct Model {
   cubism: UserModel,
   texture: glow::Texture,
   meshes: Vec<Mesh>,
-  motion: cubism::motion::Motion, // FIXME: Test
   clipping_manager: ClippingManager,
+  parameters: HashMap<String, usize>,
 }
 
 impl Model {
@@ -34,6 +33,30 @@ impl Model {
     let model_file = File::open(model_path.join(format!("{}.model3.json", model_name.display())))?;
     let model_json = cubism::json::model::Model3::from_reader(model_file)?;
     let cubism = UserModel::from_model3(&model_path, &model_json)?;
+    
+    let parameters = cubism
+      .parameters()
+      .enumerate()
+      .map(|(i, p)| (p.id.to_string(), i))
+      .collect();
+
+    /*let motions = model_json
+      .file_references
+      .motions
+      .idle
+      .iter()
+      .map(|m| model_path.join(&m.file))
+      .map(|path| {
+        debug!("[Live2D] Loading Motion '{}'", path.display());
+        let name = path
+          .file_prefix()
+          .and_then(|p| p.to_str())
+          .context("Failed to get Motion name")?;
+        let motion = cubism::motion::Motion::from_motion3_json(&path)?;
+
+        Ok((name.to_string(), motion))
+      })
+    .collect::<anyhow::Result<HashMap<_,_>>>()?;*/
     // ==================================
 
     // ==================================
@@ -76,51 +99,60 @@ impl Model {
 
     let clipping_manager = ClippingManager::new(gl.clone(), &cubism, config::MASK_BUFFER_COUNT)?;
 
-    let motion_path = &model_json.file_references.motions.idle[7].file;
-    let motion_path = model_path.join(motion_path);
-    debug!("Reading motion at '{}'", motion_path.display());
-    let mut motion = cubism::motion::Motion::from_motion3_json(motion_path)?;
-    motion.play();
-    motion.set_looped(true);
-
     Ok(Self {
       gl,
       cubism,
       texture,
       meshes,
       clipping_manager,
-      motion,
+      parameters,
     })
   }
 
-  pub fn update(&mut self, deltatime: f32) {
-    self.motion.tick(deltatime as f64);
-    self.motion.update(self.cubism.model_mut()).unwrap();
+  pub fn apply_motion(&mut self, motion: &Motion) -> CubismResult<()> {
+    motion.update(self.cubism.model_mut()) 
+  }
+
+  pub fn set_parameter_value(&mut self, id: &String, val: f32) -> bool {
+    self.parameters.get(id)
+      .is_some_and(|&idx| {
+        self.cubism.model_mut().set_parameter_value(idx, val);
+        true
+      })
+  }
+
+  pub fn get_parameter_value(&self, id: &String) -> Option<f32> {
+    self.parameters.get(id).and_then(|&idx| Some(self.cubism.parameter_at(idx).value))
+  }
+
+  pub fn update_parameters(&mut self) {
     self.cubism.model_mut().update();
-   
+
     self.clipping_manager.update_graph(&self.cubism);
     for drawable in self.cubism.drawables() {
-      self.get_mesh_by_index(drawable.index).update(&self.gl, drawable);
+      self
+        .get_mesh_by_index(drawable.index)
+        .update(&self.gl, drawable);
     }
   }
 
-  pub fn get_clipping_manager(&self) -> &ClippingManager {
+  pub(in crate::live2d) fn get_clipping_manager(&self) -> &ClippingManager {
     &self.clipping_manager
   }
 
-  pub fn get_drawable_dynamic_flag(&self, drawable_index: usize) -> DynamicFlags {
+  pub(in crate::live2d) fn get_drawable_dynamic_flag(&self, drawable_index: usize) -> DynamicFlags {
     self.cubism.drawable_dynamic_flags()[drawable_index]
   }
 
-  pub fn get_texture(&self) -> &glow::Texture {
+  pub(in crate::live2d) fn get_texture(&self) -> &glow::Texture {
     &self.texture
   }
 
-  pub fn get_mesh_by_index(&self, drawable_index: usize) -> &Mesh {
+  pub(in crate::live2d) fn get_mesh_by_index(&self, drawable_index: usize) -> &Mesh {
     &self.meshes[drawable_index]
   }
 
-  pub fn get_sorted_drawables(&self) -> Vec<Drawable<'_>> {
+  pub(in crate::live2d) fn get_sorted_drawables(&self) -> Vec<Drawable<'_>> {
     let mut drawables: Vec<_> = self.cubism.drawables().collect();
     drawables.sort_unstable_by_key(|d| d.render_order);
     drawables
@@ -231,16 +263,21 @@ impl Mesh {
   }
 
   pub fn update(&self, gl: &glow::Context, drawable: Drawable) {
-    let vertices: Vec<_> = drawable.vertex_positions
+    let vertices: Vec<_> = drawable
+      .vertex_positions
       .iter()
       .zip(drawable.vertex_uvs)
-      .map(|(&pos, &uv)| Vertex {pos, uv})
+      .map(|(&pos, &uv)| Vertex { pos, uv })
       .collect();
 
     unsafe {
       gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
 
-      gl.buffer_sub_data_u8_slice(glow::ARRAY_BUFFER, 0, bytemuck::cast_slice(vertices.as_slice()));
+      gl.buffer_sub_data_u8_slice(
+        glow::ARRAY_BUFFER,
+        0,
+        bytemuck::cast_slice(vertices.as_slice()),
+      );
 
       gl.bind_buffer(glow::ARRAY_BUFFER, None);
     }

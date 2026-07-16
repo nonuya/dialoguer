@@ -4,6 +4,7 @@ mod texture;
 mod shaders;
 mod renderer;
 mod model;
+pub mod animator;
 pub mod config;
 
 pub use model::Model;

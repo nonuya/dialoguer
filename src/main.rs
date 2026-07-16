@@ -1,5 +1,6 @@
 mod app;
 mod live2d;
+mod dialog_parser;
 
 use crate::app::App;
 use glutin::config::{Config, ConfigTemplateBuilder, GetGlConfig};
@@ -114,11 +115,7 @@ impl ApplicationHandler for MainWindow {
     gl_context.make_current(&gl_surface).unwrap();
 
     if self.app.is_none() {
-      match App::new(
-        &gl_config.display(),
-        window.inner_size().width,
-        window.inner_size().height,
-      ) {
+      match App::new(&gl_config.display()) {
         Ok(app) => self.app = Some(app),
         Err(err) => {
           error!("[Application] {:#}", err);
@@ -192,15 +189,11 @@ impl ApplicationHandler for MainWindow {
           app.resize(size.width, size.height);
         }
       }
-      WindowEvent::CloseRequested
-      | WindowEvent::KeyboardInput {
-        event:
-          KeyEvent {
-            logical_key: Key::Named(NamedKey::Escape),
-            ..
-          },
+      WindowEvent::CloseRequested => event_loop.exit(),
+      WindowEvent::KeyboardInput {
+        event,
         ..
-      } => event_loop.exit(),
+      } => self.app.as_mut().unwrap().keyboard(event),
       _ => (),
     }
   }
@@ -219,7 +212,8 @@ impl ApplicationHandler for MainWindow {
     if let Some(AppState { gl_surface, window }) = self.state.as_ref() {
       let gl_context = self.gl_context.as_ref().unwrap();
       let app = self.app.as_mut().unwrap();
-        
+
+      // Calculating Deltatime
       let now = Instant::now();
       let delta_time = now - self.last_frame;
       self.last_frame = now;
@@ -227,7 +221,7 @@ impl ApplicationHandler for MainWindow {
       let dt = delta_time.as_secs_f32();
 
       app.update(dt);
-      
+
       app.draw();
       window.request_redraw();
 
