@@ -1,4 +1,4 @@
-use crate::live2d::{Model, config, shaders::GlobalShaders};
+use crate::live2d::{Model, config, shader::GlobalShaders};
 use cubism::core::{ConstantFlags, DynamicFlags};
 use glow::HasContext;
 use std::rc::Rc;

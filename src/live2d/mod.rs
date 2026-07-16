@@ -1,7 +1,7 @@
 mod clipping_manager;
 mod rectf;
 mod texture;
-mod shaders;
+mod shader;
 mod renderer;
 mod model;
 pub mod animator;
