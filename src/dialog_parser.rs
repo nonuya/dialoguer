@@ -28,8 +28,10 @@ pub enum Command<'a> {
   Next,                    // @next
 }
 
+type Extra<'a> = extra::Err<Rich<'a, char>>;
+
 /* This is the parser for a single Dialog Block */
-pub fn dialog_block_lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token<'a>>> {
+pub fn dialog_block_lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token<'a>>, Extra<'a>> {
   let parser_block_choicer = 
     just("[[")
       .ignore_then(
@@ -44,7 +46,7 @@ pub fn dialog_block_lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token<'a>>> {
   let block_choicer = parser_block_choicer.map(Block::Choicer);
 
   let block_conversation = 
-    just('[')
+    just::<_, _, Extra>('[')
       .ignore_then(
         none_of(']')
           .repeated()
@@ -63,7 +65,7 @@ pub fn dialog_block_lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token<'a>>> {
     .map(Token::Block);
 
   let speaker =
-    any()
+    any::<&str, Extra>()
       .filter(|c: &char| c.is_ascii_alphanumeric() || *c == '-')
       .repeated()
       .at_least(1)
@@ -72,7 +74,7 @@ pub fn dialog_block_lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token<'a>>> {
       .map(Token::Speaker);
 
   let option = 
-    just("->")
+    just::<_, &str, Extra>("->")
       .padded()
       .ignore_then(
         none_of('\n')
@@ -83,7 +85,7 @@ pub fn dialog_block_lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token<'a>>> {
       .map(Token::Choice);
 
   let end =
-    just("===")
+    just::<_, &str, Extra>("===")
       .ignored()
       .map(|_| Token::End);
 
@@ -102,7 +104,7 @@ pub fn dialog_block_lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token<'a>>> {
       .map(Command::Jump);
 
   let wait =
-    just("wait")
+    just::<_, _, Extra>("wait")
       .then_ignore(whitespace)
       .ignore_then(parse_float())
       .map(Command::Wait);
@@ -145,7 +147,7 @@ pub fn dialog_block_lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token<'a>>> {
   // ==========================  
   
   let line = 
-    none_of("@[]=:\n")
+    none_of::<_, _, Extra>("@[]=:\n")
       .repeated()
       .at_least(1)
       .to_slice()
@@ -164,7 +166,7 @@ pub fn dialog_block_lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token<'a>>> {
   .collect()
 }
 
-fn parse_float<'a>() -> impl Parser<'a, &'a str, f32> {
+fn parse_float<'a>() -> impl Parser<'a, &'a str, f32, Extra<'a>> {
   let digits = text::digits(10).to_slice();
   let frac = just('.').then(digits);
   

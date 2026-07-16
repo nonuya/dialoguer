@@ -19,6 +19,7 @@ pub struct Model {
   meshes: Vec<Mesh>,
   clipping_manager: ClippingManager,
   parameters: HashMap<String, usize>,
+  motions: HashMap<String, Motion>, // FIXME: Dont put this here
 }
 
 impl Model {
@@ -40,7 +41,7 @@ impl Model {
       .map(|(i, p)| (p.id.to_string(), i))
       .collect();
 
-    /*let motions = model_json
+    let motions = model_json
       .file_references
       .motions
       .idle
@@ -56,7 +57,7 @@ impl Model {
 
         Ok((name.to_string(), motion))
       })
-    .collect::<anyhow::Result<HashMap<_,_>>>()?;*/
+    .collect::<anyhow::Result<HashMap<_,_>>>()?;
     // ==================================
 
     // ==================================
@@ -106,11 +107,16 @@ impl Model {
       meshes,
       clipping_manager,
       parameters,
+      motions,
     })
   }
 
   pub fn apply_motion(&mut self, motion: &Motion) -> CubismResult<()> {
     motion.update(self.cubism.model_mut()) 
+  }
+
+  pub fn get_motions(&self) -> &HashMap<String, Motion> {
+    &self.motions
   }
 
   pub fn set_parameter_value(&mut self, id: &String, val: f32) -> bool {

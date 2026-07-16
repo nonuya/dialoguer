@@ -9,6 +9,7 @@ pub struct Animator {
   map: HashMap<String, Value>,
 }
 
+#[derive(Clone, Copy)]
 pub enum Value {
   Fixed(f32),
   Smooth { actual: f32, target: f32, step: f32 }, // TODO: Maybe actual: Option<f32>?
@@ -34,9 +35,9 @@ impl Animator {
     self.motion = Some(motion);
   }
 
-  pub fn set_parameter(&mut self, id: String, mut value: Value) {
+  pub fn set_parameter(&mut self, id: &str, mut value: Value) {
     // If we change an existing value, we need to start from that value and go to new value
-    if let Some(old) = self.map.get(&id) {
+    if let Some(old) = self.map.get(id) {
       match (old, &mut value) {
         (
           Value::Smooth { actual: old_actual, .. },
@@ -50,7 +51,11 @@ impl Animator {
       }
     }
 
-    self.map.insert(id, value);
+    self.map.insert(id.to_string(), value);
+  }
+
+  pub fn remove_parameter(&mut self, id: &String) {
+    self.map.remove(id);
   }
 
   pub fn update(&mut self, deltatime: f32, model: &mut Model) {
@@ -73,7 +78,7 @@ impl Animator {
         } => {
           if actual != target {
             let delta = *target - *actual;
-            let step = *step * deltatime;
+            let step = *step;
 
             if delta.abs() <= step {
               *actual = *target;
@@ -90,11 +95,6 @@ impl Animator {
     }
 
     // Otros ajustes de parametros
-
     model.update_parameters();
-  }
-
-  fn lerp(a: f32, b: f32, t: f32) -> f32 {
-    a + (b - a) * t
   }
 }
