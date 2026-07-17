@@ -4,432 +4,17 @@ use chumsky::Parser;
 use glam::vec3;
 use glutin::display::GlDisplay;
 use log::debug;
-use winit::event::KeyEvent;
+use winit::{event::KeyEvent, keyboard::{KeyCode, NamedKey, PhysicalKey}};
 
 use crate::{
-  dialog::{self, manager::run_dialog},
+  dialog::{self},
   live2d::{
     self,
     animator::{self, EnumType, ParamValue, Value},
   },
 };
 
-const SPEAKER_BLOCK: &str = r#"
-[Phase01]
-Saya-Chan:
-  @set AnimType.WaistWait01
-  @set ViewType.Yori01
-  @set BlushType.On
-  @set SweatType.On
-  @set BreathDisplayType.NonControl
-  @set SteamDisplayType.None
-  @set ApproachType.Near
-  @set EyeBlowType.Normal
-  @set EyeChangeType.Normal
-  @set EyeType.Smile
-  @set EyeBallType.Normal
-  @set EyeBallScaleType.Normal
-  @set EyeHeartType.Per25
-  @set EyeStatusType.Normal
-  @set MouthType.Mouth04
-  @set PussyType.Normal
-  @set PussyMosaicType.NonControl
-  @set UnderwearBottomType.On
-  @set UnderwearBottomSweatType.NonControl
-  @set UnderBodySweatType.NonControl
-  @set FloodSemenType.None
-  @set ManType.None
-  @set ManCockType.Normal
-  @set CockSemenType.None
-  @set ManTanType.None
-  @set ManRightHandType.None
-  @set ManLeftHandType.None
-  Yay♡ I'm looking forward to it♡
-Player:
-  @set AnimType.Wait02
-  @set EyeBallType.Center04
-  @set PussyType.Open
-  @set PussyMosaicType.On
-  @set ManRightHandType.Open
-  @set ManLeftHandType.Open
-  First, let's get your pussy loosened up.
-Saya-Chan:
-  @set EyeType.Close
-  @wait 0.15
-  @set EyeType.Normal
-  @set EyeBallType.Normal
-  Oh♡ If we don't loosen up properly, I'll be in danger, right♡
-Player:
-  Looks like you were ready to go.
-Saya-Chan:
-  @set EyeType.Half
-  I wonder♡ Let's check it with your fingers♡
-Player:
-  @set UnderwearBottomType.Zurashi
-  @set UnderwearBottomSweatType.None
-  Well then...
-Saya-Chan:
-  @set AnimType.Teman01
-  @set EyeChangeType.Blush
-  @set EyeType.Smile
-  @set EyeStatusType.EyeBlush01
-  @set MouthType.Mouth07
-  @set PussyType.NonAction
-  @set ManRightHandType.Teman
-  @set ManLeftHandType.None
-  @wait 6
-  @set EyeType.Normal
-  @set MouthType.Mouth04
-  Ah♡ Oh♡ I think my pussy might be loosened up♡
-Player:
-  @set AnimType.Tan02
-  @set EyeBallType.Center04
-  @set EyeStatusType.EyeBlush01Under
-  @set MouthType.Mouth07
-  @set ManTanType.On
-  @set ManRightHandType.Open
-  @set ManLeftHandType.Open
-  @wait 6
-  And don't forget the tip.
-Saya-Chan:
-  Ahh♡ That♡ That's where I tend to get stiff♡ Oh♡
-Player:
-  Sure, it's a bit stiff.
-Saya-Chan:
-  @set EyeType.Close
-  @wait 0.15
-  @set EyeType.Normal
-  @set EyeBallType.Normal
-  @set EyeStatusType.EyeBlush01
-  @set MouthType.Mouth02
-  L-Loosening up♡ The tip of my pussy is rubbed♡ My pussy is loosening up so much♡
-Player:
-  @wait 2
-  @set AnimType.Wait03
-  @set EyeBallType.Center02
-  @set MouthType.Mouth09
-  @set UnderBodySweatType.On
-  @set ManType.On
-  @set ManTanType.None
-  @set ManRightHandType.Teman
-  @set ManLeftHandType.None
-  @wait 4
-  I think it's time to go.
-Player:
-  @wait 0.5
-  Try inserting it yourself.
-Saya-Chan:
-  O-Ofey♡ Nnchuu♡ Chuu♡
-Saya-Chan:
-  @wait 2
-  @set AnimType.Waist02
-  @set ViewType.Default
-  @set ApproachType.Normal
-  @set EyeBallType.Center04
-  @set EyeHeartType.Per50
-  @set EyeStatusType.EyeBlush01Under
-  @set MouthType.Mouth04
-  @set ManRightHandType.None
-  @wait 4
-  @set EyeType.Close
-  @wait 0.15
-  @set EyeType.Normal
-  @set EyeBallType.Normal
-  @set EyeStatusType.EyeBlush01
-  H-Hey, {0}♡ I'm always begging you♡
-Saya-Chan:
-  @wait 0.5
-  I wish {0} would beg me today♡
-Player:
-  Adults don't beg elementary school kids.
-Saya-Chan:
-  @set EyeBlowType.Blush01
-  @set EyeType.Half
-  @set MouthType.Mouth07
-  Oh, no♡ Just once♡ Just one time♡
-Saya-Chan:
-  @set AnimType.Waist03
-  @set MouthType.Mouth02
-  @wait 4
-  Please, pleeeease♡ Huff♡ Huff♡
-Player:
-  @set EyeType.Close
-  @wait 0.15
-  @set EyeBlowType.Normal
-  @set EyeType.Normal
-  @set MouthType.Mouth04
-  Damn, you're although in elementary school...!
-Player:
-  @wait 0.5
-  O-Okay.
-Player:
-  @wait 0.5
-  My cock should be in your pussy
-Player:
-  @wait 0.5
-  as soon as possible!
-Saya-Chan:
-  @set AnimType.Waist05
-  @set EyeBallType.Center04
-  @set EyeStatusType.EyeBlush01Under
-  @set MouthType.Mouth02
-  @wait 2
-  "Please let it in",  right♡ Strike♡ Strike♡
-Player:
-  @set EyeType.Close
-  @wait 0.15
-  @set EyeType.Normal
-  @set EyeBallType.Normal
-  @set EyeStatusType.EyeBlush01
-  @set MouthType.Mouth04
-  Ugh...!
-Player:
-  @wait 0.5
-  Oh, please!
-Player:
-  @wait 0.5
-  Please let me put my cock
-Player:
-  @wait 0.5
-  in your elementary school girl's pussy!
-Saya-Chan:
-  @set EyeType.Half
-  You are really begging for a elementary school girl♡ I can't help you♡
-Saya-Chan:
-  @set AnimType.Waist02
-  @set ViewType.Yori01
-  @set ApproachType.Near
-  @set EyeBallType.Center04
-  @set EyeStatusType.EyeBlush01Under
-  @set MouthType.Mouth03
-  @wait 4
-  @set AnimType.Insert01
-  @set MouthType.Mouth04
-  @wait 1.25
-  One two, one two♡ Well, let's have it♡
-  @set EyeType.Close
-  @wait 0.15
-  @set EyeType.Normal
-  @set EyeBallType.Center03
-  @set EyeStatusType.EyeBlush01Upper
-  @wait 1.6
-  @set EyeType.Close
-  @set MouthType.Mouth07
-  @wait 1
-  @set EyeChangeType.Normal
-  @set EyeType.Normal
-  @set EyeBallType.Center02
-  @set EyeBallScaleType.Small05
-  @set EyeStatusType.Normal
-  @set MouthType.Mouth02
-  @wait 1
-  One two, one two♡ Well, let's have it♡ Woooo♡♡♡♡
-  @set EyeType.Close
-  @wait 0.15
-  @set EyeChangeType.Blush
-  @set EyeType.Half
-  @set EyeBallType.Center03
-  @set EyeBallScaleType.Normal
-  @set EyeStatusType.EyeBlush01Upper
-  @wait 1.85
-  @set EyeType.Normal
-  @set EyeBallType.Center04
-  @set EyeStatusType.EyeBlush01Under
-  @set MouthType.Mouth04
-  @wait 0.9
-  @set AnimType.InsertWait01
-  @set ViewType.Default
-  @set ApproachType.Normal
-  @wait 4
-  @next
-Saya-Chan:
-  Huff♡ Huff♡
-Saya-Chan:
-  @set EyeType.Close
-  @wait 0.15
-  @set EyeType.Normal
-  @set EyeBallType.Normal
-  @set EyeStatusType.EyeBlush01
-  Hey♡ How's my pussy??
-Player:
-  I-It feels so good!
-Saya-Chan:
-  @set EyeType.Half
-  Aha♡ {0}, you're so cute♡
-==="#;
-
-static SPEAKER_BLOCK_2: &str = r#"
-[Phase01]
-Saya-Chan:
-  @setmainchoicer [[Phase08]]
-  @set AnimType.Piston05
-  @set ViewType.Default
-  @set BlushType.On
-  @set SweatType.On
-  @set BreathDisplayType.NonControl
-  @set SteamDisplayType.None
-  @set ApproachType.Normal
-  @set EyeBlowType.Normal
-  @set EyeChangeType.Blush
-  @set EyeType.Half
-  @set EyeBallType.Normal
-  @set EyeBallScaleType.Normal
-  @set EyeHeartType.Per50
-  @set EyeStatusType.EyeBlush01
-  @set MouthType.Mouth02
-  @set PussyType.OpenInsertCock
-  @set PussyMosaicType.None
-  @set UnderwearBottomType.None
-  @set UnderwearBottomSweatType.None
-  @set UnderBodySweatType.On
-  @set FloodSemenType.None
-  @set ManType.On
-  @set ManCockType.Normal
-  @set CockSemenType.None
-  @set ManTanType.None
-  @set ManRightHandType.None
-  @set ManLeftHandType.None
-  Heey♡ Are you cuming already♡ We're just getting started♡
-Player:
-  I can't stand this piston!
-Player:
-  @wait 0.5
-  C-Cuming!
-Saya-Chan:
-  @set AnimType.PistonFinishWait01
-  @set MouthType.Mouth04
-  Non, non, non♡ Don't cum yet♡ Aha♡
-Player:
-  Oh, no!
-Saya-Chan:
-  @set EyeBlowType.Blush01
-  @set EyeType.Quater
-  You are an adult, but your ejaculation is controlled by an elementary school student♡ And you have a pathetic face♡
-Saya-Chan:
-  @set AnimType.Piston05
-  @set EyeType.Half
-  @set EyeBallType.Center04
-  @set EyeStatusType.EyeBlush01Under
-  @set EyeType.Close
-  @wait 0.15
-  @set EyeType.Half
-  @set EyeBallType.Normal
-  @set EyeStatusType.EyeBlush01
-  Hey, hey♡ This is good, isn't it♡ Huff♡ Huff♡
-Player:
-  Wooooo! Cuming! Cuming!
-Saya-Chan:
-  @set AnimType.PistonFinishWait01
-  @set EyeBlowType.Normal
-  @set MouthType.Mouth02
-  So, you know♡ You can't just cum without my permission♡
-Player:
-  Oh, my Gosh, Saya-Chan... That's terrible!
-Saya-Chan:
-  @set AnimType.Piston02
-  @set MouthType.Mouth03
-  @set MouthType.Mouth04
-  If you want to cum that badly♡ You know what I mean♡ Huff♡
-Player:
-  Please let me cum...
-Saya-Chan:
-  @set EyeType.Quater
-  @set MouthType.Mouth02
-  No, no, no♡ You're not sincere enough♡ Maybe I should pull it out♡ Huff♡
-Player:
-  I'm a perverted adult who gets a boner from elementary school girls!
-Player:
-  @wait 0.5
-  Please!! Pleeeease!!
-Player:
-  @set MouthType.Mouth04
-  @wait 0.5
-  Please, squeeze the cock semen by your loli pussyyyyy!
-Player:
-  @wait 0.5
-  Pleeeease!!!!
-Saya-Chan:
-  @set EyeBlowType.Blush01
-  All right, all right♡ Just this once♡
-Player:
-  @set AnimType.Piston05
-  @set EyeType.Half
-  Oooohhhhh
-Saya-Chan:
-  Hey, hey, hey♡ I give you permission♡ You can cum♡
-Saya-Chan:
-  @wait 0.5
-  Your noob cock, get squeezed down by my immature pussy and spurt the semen deep inside♡
-Saya-Chan:
-  @wait 0.5
-  @set EyeBlowType.Normal
-  @set EyeType.Quater
-  @set MouthType.Mouth02
-  Spurt♡ Spurt, Spurt, Spurt♡ Spuuuuurt♡
-Player:
-  Cuming! Cuming! Cuming! Cuming!
-Saya-Chan:
-  @set AnimType.PistonFinish02
-  @set EyeType.Smile
-  @set EyeBallType.Center03
-  @set EyeStatusType.EyeBlush01Upper
-  @set MouthType.Mouth04
-  @set CockSemenType.NonAction
-  @wait 0.25
-  Oh♡♡♡♡ Aha♡♡♡♡
-  @set EyeChangeType.Normal
-  @set EyeType.Normal
-  @set EyeBallScaleType.Small05
-  @set EyeStatusType.Upper
-  @set MouthType.Mouth02
-  @wait 1.25
-  @set EyeBlowType.Blush02
-  @set EyeChangeType.Blush
-  @set EyeType.Smile
-  @set EyeBallType.Normal
-  @set EyeBallScaleType.Normal
-  @set EyeStatusType.Normal
-  @set MouthType.Mouth06
-  @wait 1
-  @set EyeBlowType.Blush01
-  @set EyeType.Half
-  @set EyeBallType.Center03
-  @set EyeStatusType.EyeBlush01Upper
-  @wait 0.75
-  @set EyeType.Smile
-  @wait 0.15
-  Oh♡♡♡♡ Aha♡♡♡♡ It's cuming out sooo much♡♡♡♡ Huff♡♡♡♡
-  @set EyeBlowType.Blush02
-  @set MouthType.Mouth04
-  @wait 0.85
-  @set EyeBlowType.Blush01
-  @set EyeType.Half
-  @set EyeBallScaleType.Small05
-  @set MouthType.Mouth05
-  @wait 2.25
-  @set EyeBallScaleType.Normal
-  @set MouthType.Mouth04
-  @wait 1.4
-  @set AnimType.PistonFinishWait01
-  @set EyeBlowType.Normal
-  @set EyeBallType.Center04
-  @set EyeHeartType.Per75
-  @set EyeStatusType.EyeBlush01Under
-  @wait 4
-  @set EyeType.Close
-  @wait 0.15
-  @set EyeType.Normal
-  @set EyeBallType.Normal
-  @set EyeStatusType.EyeBlush01
-  Huff♡ Huff♡ Did it feel good, {0}?
-Player:
-  I-It was so, so good...
-Saya-Chan:
-  @set EyeBlowType.Blush01
-  @set EyeType.Quater
-  Aha♡ {0} melty face is so cute♡
-===
-"#;
+// TODO: Add Speed for Animations
 
 pub struct App {
   gl: Rc<glow::Context>,
@@ -439,9 +24,11 @@ pub struct App {
   animator: animator::Animator,
   motion_mgr: animator::MotionManager,
   dialog_mgr: dialog::manager::DialogManager,
-  dialog_iter: dialog::manager::DialogIter,
+  dialog_player: dialog::manager::DialogPlayer,
   my_enums: animator::EnumMap,
 }
+
+static SPEAKER_BLOCK_2: &str = include_str!("../model013.dialog");
 
 impl App {
   pub fn new(display: &impl GlDisplay) -> anyhow::Result<Self> {
@@ -468,7 +55,7 @@ impl App {
       .map_err(|err| anyhow::anyhow!("Dialog Block Lexer {:#?}", err))?;
 
     let dialog_mgr = dialog::manager::DialogManager::new(tokens)?;
-    let dialog_iter = dialog_mgr.build_dialog("Phase01").unwrap();
+    let dialog_player = dialog::manager::DialogPlayer::new(dialog_mgr.build("Phase01").unwrap());
     let my_enums = HashMap::from([
       (
         "BlushType",
@@ -1072,15 +659,14 @@ impl App {
       my_enums,
       animator: animator::Animator::new(),
       dialog_mgr,
-      dialog_iter,
       motion_mgr,
+      dialog_player,
     })
   }
 
   pub fn update(&mut self, deltatime: f32) {
-    dialog::manager::run_dialog(
+    self.dialog_player.update(
       &self.dialog_mgr,
-      &mut self.dialog_iter,
       &mut self.animator,
       &self.my_enums,
       &self.motion_mgr
@@ -1099,7 +685,22 @@ impl App {
 
   pub fn keyboard(&mut self, event: KeyEvent) {
     if event.state.is_pressed() {
-      dialog::manager::next_conversation(&mut self.dialog_iter);
+      match event.physical_key {
+        PhysicalKey::Code(KeyCode::KeyI) => {
+          self.dialog_player.play();
+        },
+        PhysicalKey::Code(KeyCode::Space) => {
+          self.dialog_player.next();
+        },
+        PhysicalKey::Code(KeyCode::Digit1) => self.dialog_player.handle_input(0),
+        PhysicalKey::Code(KeyCode::Digit2) => self.dialog_player.handle_input(1),
+        PhysicalKey::Code(KeyCode::Digit3) => self.dialog_player.handle_input(2),
+        PhysicalKey::Code(KeyCode::Digit4) => self.dialog_player.handle_input(3),
+        PhysicalKey::Code(KeyCode::Digit5) => self.dialog_player.handle_input(4),
+        PhysicalKey::Code(KeyCode::Digit6) => self.dialog_player.handle_input(5),
+        _ => {}
+      }
     }
+      // dialog::manager::next_conversation(&mut self.dialog_iter);
   }
 }
