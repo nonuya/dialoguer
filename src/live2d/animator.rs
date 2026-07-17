@@ -5,8 +5,9 @@ use anyhow::Context;
 use cubism::motion::Motion;
 use log::{debug, warn};
 
-pub struct Animator<'a> {
-  motion: Option<&'a Motion>,
+pub struct Animator {
+  motion: Option<Motion>,
+  timer: Option<f32>,
   map: HashMap<String, Value>,
 }
 
@@ -22,15 +23,16 @@ impl Value {
   }
 }
 
-impl<'a> Animator<'a> {
+impl Animator {
   pub fn new() -> Self {
     Self {
       motion: None,
+      timer: None,
       map: HashMap::new(),
     }
   }
 
-  pub fn play_motion(&mut self, motion: &'a mut Motion, looped: bool) {
+  pub fn play_motion(&mut self, mut motion: Motion, looped: bool) {
     motion.play();
     motion.set_looped(looped);
     self.motion = Some(motion);
@@ -59,12 +61,26 @@ impl<'a> Animator<'a> {
     self.map.remove(id);
   }
 
+  pub fn set_timer(&mut self, seconds: f32) {
+    self.timer = Some(seconds);
+  }
+
+  pub fn is_timer_playing(&self) -> bool {
+    self.timer.is_some()
+  }
+
   pub fn update(&mut self, deltatime: f32, model: &mut Model) {
-    /*
     if let Some(motion) = self.motion.as_mut() {
       motion.tick(deltatime as f64);
       model.apply_motion(motion).unwrap();
-    }*/
+    }
+    if let Some(remaining) = self.timer.as_mut() {
+      *remaining -= deltatime;
+
+      if *remaining <= 0.0 {
+        self.timer = None;
+      }
+    }
 
     for (id, value) in &mut self.map {
       match value {
@@ -152,6 +168,6 @@ impl MotionManager {
       )
     ]);
  */
-pub type EnumValue = (String, Value);
-pub type EnumType = /*Values*/ HashMap<&'static str, Vec<EnumValue>>;
-pub type EnumMap = HashMap<String, EnumType>;
+pub struct ParamValue(pub &'static str, pub Value);
+pub struct EnumType(/*Values*/ pub HashMap<&'static str, Vec<ParamValue>>);
+pub type EnumMap = HashMap<&'static str, EnumType>;

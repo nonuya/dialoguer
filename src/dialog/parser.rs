@@ -121,69 +121,63 @@ fn parse_float<'a>() -> impl Parser<'a, &'a str, f32, Extra<'a>> {
 }
 
 #[derive(Debug)]
-enum JumpEvent<'a> {
-  Conversation(&'a str),
-  Choicer(&'a str),
+pub enum JumpEvent {
+  Conversation(String),
+  Choicer(String),
 }
 
 #[derive(Debug)]
-pub enum Event<'a> {
-  Text(&'a str),
-  SetMainChoicer(&'a str),
-  SetAnim(&'a str),
-  SetView(&'a str),
-  Jump(JumpEvent<'a>),
-  SetParameter(&'a str, &'a str),
-  RemoveParamater(&'a str),
+pub enum Event {
+  Text(String),
+  SetMainChoicer(String),
+  SetAnim(String),
+  SetView(String),
+  Jump(JumpEvent),
+  SetParameter(String, String),
+  RemoveParamater(String),
   Wait(f32),
   Next,
 }
 
 #[derive(Debug)]
-pub struct ConversationItem<'a> {
-  pub who: &'a str,
-  pub events: Vec<Event<'a>>,
+pub struct Conversation {
+  pub who: String,
+  pub events: Vec<Event>,
 }
 
 #[derive(Debug)]
-pub struct ChoiceItem<'a> {
-  pub label: &'a str,
-  pub goto: JumpEvent<'a>,
+pub struct Choice {
+  pub label: String,
+  pub goto: JumpEvent,
 }
 
 #[derive(Debug)]
-pub enum Dialog<'a> {
-  Conversation {
-    id: &'a str,
-    items: Vec<ConversationItem<'a>>,
-  },
-  Choicer {
-    id: &'a str,
-    items: Vec<ChoiceItem<'a>>,
-  },
+pub enum Dialog {
+  Conversation(Vec<Conversation>),
+  Choicer(Vec<Choice>),
 }
 
 pub fn dialog_parser<'a>()
--> impl Parser<'a, &'a [Token<'a>], Vec<Dialog<'a>>, extra::Err<Rich<'a, Token<'a>>>> {
+-> impl Parser<'a, &'a [Token<'a>], Vec<(String, Dialog)>, extra::Err<Rich<'a, Token<'a>>>> {
   let event = select! {
-    Token::Text(text) => Event::Text(text),
+    Token::Text(text) => Event::Text(text.to_string()),
     Token::Command(Command::Wait(seconds)) => Event::Wait(seconds),
-    Token::Command(Command::Jump(Block::Conversation(id))) => Event::Jump(JumpEvent::Conversation(id)),
-    Token::Command(Command::Jump(Block::Choicer(id))) => Event::Jump(JumpEvent::Choicer(id)),
+    Token::Command(Command::Jump(Block::Conversation(id))) => Event::Jump(JumpEvent::Conversation(id.to_string())),
+    Token::Command(Command::Jump(Block::Choicer(id))) => Event::Jump(JumpEvent::Choicer(id.to_string())),
     Token::Command(Command::Set { r#enum, value }) => {
       match r#enum {
-        "AnimType" => Event::SetAnim(value),
-        "ViewType" => Event::SetView(value),
+        "AnimType" => Event::SetAnim(value.to_string()),
+        "ViewType" => Event::SetView(value.to_string()),
         _ => {
           if value == "NonAction" || value == "NonControl" {
-            Event::RemoveParamater(r#enum)
+            Event::RemoveParamater(r#enum.to_string())
           } else {
-            Event::SetParameter(r#enum, value)
+            Event::SetParameter(r#enum.to_string(), value.to_string())
           }
         }
       }
     },
-    Token::Command(Command::SetMainChoicer(id)) => Event::SetMainChoicer(id),
+    Token::Command(Command::SetMainChoicer(id)) => Event::SetMainChoicer(id.to_string()),
     Token::Command(Command::Next) => Event::Next
   };
 
@@ -191,7 +185,7 @@ pub fn dialog_parser<'a>()
     Token::Speaker(speaker) => speaker
   }
   .then(event.repeated().collect())
-  .map(|(who, events)| ConversationItem { who, events });
+  .map(|(who, events)| Conversation { who: who.to_string(), events });
 
   let conversation_block = select! {
     Token::Block(Block::Conversation(id)) => id
@@ -200,16 +194,16 @@ pub fn dialog_parser<'a>()
   .then_ignore(select! {
     Token::End => ()
   })
-  .map(|(id, items)| Dialog::Conversation { id, items });
+  .map(|(id, items)| (id.to_string(), Dialog::Conversation(items)));
 
   let choice_item = select! {
     Token::Choice(label) => label
   }
   .then(select! {
-    Token::Command(Command::Jump(Block::Conversation(id))) => JumpEvent::Conversation(id),
-    Token::Command(Command::Jump(Block::Choicer(id))) => JumpEvent::Choicer(id),
+    Token::Command(Command::Jump(Block::Conversation(id))) => JumpEvent::Conversation(id.to_string()),
+    Token::Command(Command::Jump(Block::Choicer(id))) => JumpEvent::Choicer(id.to_string()),
   })
-  .map(|(label, goto)| ChoiceItem { label, goto });
+  .map(|(label, goto)| Choice { label: label.to_string(), goto });
 
   let choicer_block = select! {
     Token::Block(Block::Choicer(id)) => id
@@ -218,7 +212,7 @@ pub fn dialog_parser<'a>()
   .then_ignore(select! {
     Token::End => ()
   })
-  .map(|(id, items)| Dialog::Choicer { id, items });
+  .map(|(id, items)| (id.to_string(), Dialog::Choicer(items)));
 
   choice((conversation_block, choicer_block))
     .repeated()
@@ -227,9 +221,7 @@ pub fn dialog_parser<'a>()
 
 #[cfg(test)]
 mod tests {
-  use crate::dialog_parser;
-
-use super::*;
+  use super::*;
 
   #[test]
   fn parsing_number() {
