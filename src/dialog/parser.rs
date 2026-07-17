@@ -19,7 +19,7 @@ pub enum Block<'a> {
 #[derive(Debug, PartialEq, Clone)]
 pub enum Command<'a> {
   Wait(f32),       // @wait 2.3
-  Jump(Block<'a>), // @jump [Conversation], @jump [[Choicer]]
+  Jump(&'a str), // @jump <ID>
   Set {
     // @set MyEnum.value
     r#enum: &'a str,
@@ -61,6 +61,10 @@ pub fn dialog_block_lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token<'a>>, Extr
 
   let end = just::<_, &str, Extra>("===").ignored().map(|_| Token::End);
 
+  let id = just::<_, _, Extra>('<')
+    .ignore_then(none_of('>').repeated().at_least(1).padded().to_slice())
+    .then_ignore(just('>'));
+
   // ==========================
   // COMMANDS
   // ==========================
@@ -68,7 +72,7 @@ pub fn dialog_block_lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token<'a>>, Extr
 
   let jump = just("jump")
     .then_ignore(whitespace)
-    .ignore_then(choice((block_choicer, block_conversation)))
+    .ignore_then(id)
     .map(Command::Jump);
 
   let wait = just::<_, _, Extra>("wait")
@@ -121,18 +125,12 @@ fn parse_float<'a>() -> impl Parser<'a, &'a str, f32, Extra<'a>> {
 }
 
 #[derive(Debug)]
-pub enum JumpEvent {
-  Conversation(String),
-  Choicer(String),
-}
-
-#[derive(Debug)]
 pub enum Event {
   Text(String),
   SetMainChoicer(String),
   SetAnim(String),
   SetView(String),
-  Jump(JumpEvent),
+  Jump(String),
   SetParameter(String, String),
   RemoveParamater(String),
   Wait(f32),
@@ -148,7 +146,7 @@ pub struct Conversation {
 #[derive(Debug)]
 pub struct Choice {
   pub label: String,
-  pub goto: JumpEvent,
+  pub goto: String,
 }
 
 #[derive(Debug)]
@@ -162,8 +160,7 @@ pub fn dialog_parser<'a>()
   let event = select! {
     Token::Text(text) => Event::Text(text.to_string()),
     Token::Command(Command::Wait(seconds)) => Event::Wait(seconds),
-    Token::Command(Command::Jump(Block::Conversation(id))) => Event::Jump(JumpEvent::Conversation(id.to_string())),
-    Token::Command(Command::Jump(Block::Choicer(id))) => Event::Jump(JumpEvent::Choicer(id.to_string())),
+    Token::Command(Command::Jump(id)) => Event::Jump(id.to_string()),
     Token::Command(Command::Set { r#enum, value }) => {
       match r#enum {
         "AnimType" => Event::SetAnim(value.to_string()),
@@ -200,8 +197,7 @@ pub fn dialog_parser<'a>()
     Token::Choice(label) => label
   }
   .then(select! {
-    Token::Command(Command::Jump(Block::Conversation(id))) => JumpEvent::Conversation(id.to_string()),
-    Token::Command(Command::Jump(Block::Choicer(id))) => JumpEvent::Choicer(id.to_string()),
+    Token::Command(Command::Jump(id)) => id.to_string(),
   })
   .map(|(label, goto)| Choice { label: label.to_string(), goto });
 
@@ -284,22 +280,13 @@ mod tests {
   #[test]
   fn parsing_command() {
     let res = dialog_block_lexer()
-      .parse("@jump [Conversation]")
+      .parse("@jump <Conversation>")
       .into_output();
     assert_eq!(
       res,
-      Some(vec![Token::Command(Command::Jump(Block::Conversation(
+      Some(vec![Token::Command(Command::Jump(
         "Conversation"
-      )))])
-    );
-    let res = dialog_block_lexer()
-      .parse("@jump [[Choicer]]")
-      .into_output();
-    assert_eq!(
-      res,
-      Some(vec![Token::Command(Command::Jump(Block::Choicer(
-        "Choicer"
-      )))])
+      ))])
     );
     let res = dialog_block_lexer().parse("@jump").into_output();
     assert_eq!(res, None);
@@ -349,7 +336,7 @@ mod tests {
     -> Second option
   saya:
     @wait 1.5
-    @jump [[Choicer01]]
+    @jump <Choicer01>
   player:
     @set Game.state
     @next
@@ -369,7 +356,7 @@ mod tests {
         Token::Choice("Second option"),
         Token::Speaker("saya"),
         Token::Command(Command::Wait(1.5)),
-        Token::Command(Command::Jump(Block::Choicer("Choicer01"))),
+        Token::Command(Command::Jump("Choicer01")),
         Token::Speaker("player"),
         Token::Command(Command::Set {
           r#enum: "Game",
