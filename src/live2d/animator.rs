@@ -1,9 +1,10 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, fs, path::{Path, PathBuf}};
 
 use crate::live2d::Model;
 use anyhow::Context;
 use cubism::motion::Motion;
 use log::{debug, warn};
+use serde::{Deserialize, Serialize};
 
 pub struct Animator {
   motion: Option<Motion>,
@@ -11,10 +12,36 @@ pub struct Animator {
   map: HashMap<String, Value>,
 }
 
-#[derive(Clone, Copy)]
+
+#[derive(Serialize, Deserialize)]
+pub struct EnumMap {
+    pub enums: HashMap<String, EnumType>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct EnumType {
+    pub values: HashMap<String, Vec<ParamValue>>,
+}
+/// Ver "assets/example.map" para un ejemplo
+#[derive(Serialize, Deserialize)]
+pub struct ParamValue {
+    pub name: String,
+    pub value: Value,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy)]
 pub enum Value {
   Fixed(f32),
-  Smooth { actual: f32, target: f32, step: f32 }, // TODO: Maybe actual: Option<f32>?
+  Smooth {
+    #[serde(default = "default_actual")]
+    actual: f32,
+
+    target: f32,
+    step: f32 },
+}
+
+fn default_actual() -> f32 {
+  0.0
 }
 
 impl Value {
@@ -38,7 +65,7 @@ impl Animator {
     self.motion = Some(motion);
   }
 
-  pub fn set_parameter(&mut self, id: &str, mut value: Value) {
+  pub fn set_parameter(&mut self, id: &String, mut value: Value) {
     // If we change an existing value, we need to start from that value and go to new value
     if let Some(old) = self.map.get(id) {
       match (old, &mut value) {
@@ -138,6 +165,7 @@ impl MotionManager {
         Ok((name.to_string(), motion))
       })
     .collect::<anyhow::Result<HashMap<_,_>>>()?;
+    // let motions = HashMap::new();
 
     Ok(Self(motions))
   }
@@ -147,27 +175,14 @@ impl MotionManager {
   }
 }
 
-/*
-    let enum_map = HashMap::from([
-      (
-        "BlushType",
-        EnumType(HashMap::from([
-          (
-            "None",
-            vec![ParamValue("Param83", Value::smooth(0.0, 1.0))],
-          ),
-          (
-            "Half",
-            vec![ParamValue("Param83", Value::smooth(50.0, 1.0))],
-          ),
-          (
-            "On",
-            vec![ParamValue("Param83", Value::smooth(100.0, 1.0))],
-          ),
-        ])),
-      )
-    ]);
- */
-pub struct ParamValue(pub &'static str, pub Value);
-pub struct EnumType(/*Values*/ pub HashMap<&'static str, Vec<ParamValue>>);
-pub type EnumMap = HashMap<&'static str, EnumType>;
+pub fn load_enum_map(filepath: &Path) -> anyhow::Result<EnumMap> {
+  let src =
+    fs::read_to_string(filepath)
+      .context(format!("Failed to load {}", filepath.display()))?;
+
+  let myenums: EnumMap =
+    ron::from_str(&src)
+    .context("Failed to parse DialogMap")?;
+
+  Ok(myenums)
+}

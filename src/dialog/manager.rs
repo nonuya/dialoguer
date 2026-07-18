@@ -1,7 +1,7 @@
-use std::collections::{HashMap, VecDeque, btree_map::IterMut};
+use std::collections::{HashMap, VecDeque};
 
 use crate::{
-  dialog::parser::{Dialog, DialogNode, Event, Token, dialog_parser},
+  dialog::parser::{Dialog, Event, Token, dialog_parser},
   live2d::animator::{Animator, EnumMap, MotionManager},
 };
 use anyhow::Context;
@@ -38,7 +38,23 @@ impl DialogManager {
         },
       );
 
+    anyhow::ensure!(map.contains_key("Initial.1"), "Dialog File must be have [Initial.1]");
+    anyhow::ensure!(map.contains_key("Idle"), "Dialog File must be have [Idle]");
+    anyhow::ensure!(map.contains_key("Phase01"), "Dialog File must be have [[Phase01]]");
+
     Ok(Self { dialogs, map })
+  }
+
+  pub fn build_phase01(&self) -> DialogEntryPoint {
+    self.build("Phase01").unwrap()
+  }
+
+  pub fn build_idle(&self) -> DialogEntryPoint {
+    self.build("Idle").unwrap()
+  }
+
+  pub fn build_initial(&self) -> DialogEntryPoint {
+    self.build("Initial.1").unwrap()
   }
 
   // Construyes un iterator a partir de un bloque
@@ -86,25 +102,19 @@ impl DialogManager {
   }
 }
 
+/*
+ * Dialogo es este bloque
+ [Header]
+  Player:   <- Esta es una conversación
+    ...
+  Saya-Chan:
+    ...
+ ===
+ */
 #[derive(Debug, Clone)]
 pub struct DialogIter {
   index: usize,                      // Dialogo
   queue: VecDeque<ConversationIter>, // Player, Saya-Chan, Player, ...
-}
-
-impl DialogIter {
-  fn next(&mut self) {
-    let conversation_idx = self.queue.front();
-    if conversation_idx.is_none() {
-      return;
-    }
-
-    let conversation_iter = conversation_idx.unwrap();
-
-    if conversation_iter.events.is_empty() {
-      self.queue.pop_front();
-    }
-  }
 }
 
 #[derive(Debug, Clone)]
@@ -113,8 +123,10 @@ pub struct ConversationIter {
   events: VecDeque<usize>,
 }
 
+#[derive(Debug)]
 enum PlayerState {
   Running,
+  WaitingInput,
   WaitingChoice(Vec<(String, DialogIter)>),
   Finished,
 }
@@ -147,23 +159,26 @@ impl DialogPlayer {
 
   pub fn next(&mut self) {
     if let Some(iter) = self.iter.as_mut() {
-      iter.next();
-
-      if iter.queue.is_empty() {
-        self.iter = None;
+      if matches!(self.state, PlayerState::WaitingInput) {
+        if iter.queue.pop_front().is_none() {
+          self.state = PlayerState::Finished;
+          self.iter = None;
+        } else {
+          self.state = PlayerState::Running;
+        }
       }
     }
   }
 
   pub fn update(
     &mut self,
-    dialog_mgr: &DialogManager,
     animator: &mut Animator,
+    dialog_mgr: &DialogManager,
     enum_map: &EnumMap,
     motion_mgr: &MotionManager,
   ) {
     match &self.state {
-       PlayerState::Running => self.next_iter(dialog_mgr, animator, enum_map, motion_mgr),
+       PlayerState::Running => self.consume_dialog(animator, dialog_mgr, enum_map, motion_mgr),
        PlayerState::WaitingChoice(choices) => {
          if !self.shown {
            self.shown = true;
@@ -172,7 +187,7 @@ impl DialogPlayer {
            }
          }
        },
-       PlayerState::Finished => {}
+       _ => {}
     }
   }
 
@@ -187,39 +202,43 @@ impl DialogPlayer {
     } 
   }
 
-  fn next_iter(
+  fn consume_dialog(
     &mut self,
-    dialog_mgr: &DialogManager,
     animator: &mut Animator,
+    dialog_mgr: &DialogManager,
     enum_map: &EnumMap,
     motion_mgr: &MotionManager,
   ) {
-    if self.iter.is_none() || animator.is_timer_playing() {
+    if animator.is_timer_playing() {
       return;
     }
 
-    let iter = self.iter.as_mut().unwrap();
-
-    let conversation_idx = iter.queue.front_mut();
-    if conversation_idx.is_none() {
+    let Some(iter) = self.iter.as_mut() else {
+      self.state = PlayerState::Finished;
       return;
-    }
-    
-    let dialog = &dialog_mgr.dialogs[iter.index];
-    let conversation_iter = conversation_idx.unwrap();
-    let nodes = match dialog {
-      Dialog::Conversation(nodes) => nodes,
-      Dialog::Choicer(nodes) => nodes,
+    };
+    let Some(conversation_iter) = iter.queue.front_mut() else {
+      self.state = PlayerState::Finished;
+      return;
     };
 
-    let mut next_iter = None;
+    let dialog = &dialog_mgr.dialogs[iter.index];
+    let nodes = match dialog {
+        Dialog::Conversation(nodes) => nodes,
+        Dialog::Choicer(nodes) => nodes
+    };
+
     let conversation = &nodes[conversation_iter.idx];
+    let mut next_iter = None;
 
     loop {
       let Some(idx) = conversation_iter.events.front_mut() else {
+        self.state = PlayerState::WaitingInput;
+        // Podríamos hacer conversation_iter.pop_front() pero eso haría que avance al siguiente dialogo.
+        // Nosotros queremos esperar el input del usuario.
         break;
       };
-
+    
       match &conversation.events[*idx] {
         Event::SetMainChoicer(id) => {
           if let Some(initial_dialog) = dialog_mgr.build(id) {
@@ -234,13 +253,12 @@ impl DialogPlayer {
           animator.set_timer(*seconds);
         }
         Event::SetParameter(enum_type, enum_value) => {
-          match enum_map.get(enum_type.as_str()) {
-            Some(values) => {
-              // FIXME: Delete .0.
-              match values.0.get(enum_value.as_str()) {
+          match enum_map.enums.get(enum_type) {
+            Some(myenum) => {
+              match myenum.values.get(enum_value) {
                 Some(params) => {
                   for p in params {
-                    animator.set_parameter(p.0, p.1);
+                    animator.set_parameter(&p.name, p.value);
                   }
                 }
                 None => warn!(
@@ -270,18 +288,18 @@ impl DialogPlayer {
           None => warn!("Failed to jumping. '{}' doesnt exists", id),
         },
         Event::RemoveParamater(enum_type) => {
-          match enum_map.get(enum_type.as_str()) {
+          match enum_map.enums.get(enum_type) {
             Some(myenum) => {
               let params = myenum
-                .0
+                .values
                 .values()
                 .next()
                 .context("EnumType is empty")
                 .unwrap();
               for p in params {
                 // FIXME: Remove &'static str
-                warn!("Removing '{}'", p.0);
-                animator.remove_parameter(&p.0.to_string());
+                warn!("Removing '{}'", &p.name);
+                animator.remove_parameter(&p.name);
               }
             }
             None => warn!("EnumType '{}' doesn't exists!", enum_type),

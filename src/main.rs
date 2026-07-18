@@ -1,6 +1,7 @@
 mod app;
 mod live2d;
 mod dialog;
+mod scene;
 
 use crate::app::App;
 use glutin::config::{Config, ConfigTemplateBuilder, GetGlConfig};
@@ -16,9 +17,8 @@ use raw_window_handle::HasWindowHandle;
 use std::num::NonZeroU32;
 use std::time::Instant;
 use winit::application::ApplicationHandler;
-use winit::event::{KeyEvent, WindowEvent};
+use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
-use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowAttributes};
 
 fn window_attributes() -> WindowAttributes {
