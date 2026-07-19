@@ -15,18 +15,28 @@ pub struct Animator {
 
 #[derive(Serialize, Deserialize)]
 pub struct EnumMap {
-    pub enums: HashMap<String, EnumType>,
+  pub enums: HashMap<String, EnumType>,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct EnumType {
-    pub values: HashMap<String, Vec<ParamValue>>,
+  pub values: HashMap<String, Vec<ParamValue>>,
 }
 /// Ver "assets/example.map" para un ejemplo
 #[derive(Serialize, Deserialize)]
 pub struct ParamValue {
-    pub name: String,
-    pub value: Value,
+  pub name: String,
+  pub value: Value,
+
+  #[serde(default)]
+  pub modification: Option<Modification>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Modification {
+  pub lhs: String,
+  pub rhs: String,
+  pub then: f32
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
@@ -65,6 +75,22 @@ impl Animator {
     self.motion = Some(motion);
   }
 
+  pub fn is_parameter_equal_to_value(&self, id: &String, b: &Value) -> bool {
+    self.map.get(id)
+      .is_some_and(|a| {
+        let lhs = match a {
+          Value::Fixed(f) => f,
+          Value::Smooth { target, .. } => target
+        };
+        let rhs = match b {
+          Value::Fixed(f) => f,
+          Value::Smooth { target, .. } => target
+        };
+
+        lhs == rhs
+      })
+  }
+
   pub fn set_parameter(&mut self, id: &String, mut value: Value) {
     // If we change an existing value, we need to start from that value and go to new value
     if let Some(old) = self.map.get(id) {
@@ -79,6 +105,15 @@ impl Animator {
         ) => *new_actual = *old_actual,
         _ => {}
       }
+    }
+
+    match value {
+      Value::Smooth { step, ..} => {
+        if step == 0.0 {
+          warn!("Step of Parameter '{}' is zero!", id)
+        }
+      },
+      _ => {}
     }
 
     self.map.insert(id.to_string(), value);

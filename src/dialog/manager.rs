@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 
 use crate::{
   dialog::parser::{Dialog, Event, Token, dialog_parser},
-  live2d::animator::{Animator, EnumMap, MotionManager},
+  live2d::animator::{Animator, EnumMap, MotionManager, ParamValue, Value},
 };
 use anyhow::Context;
 use chumsky::Parser;
@@ -257,8 +257,9 @@ impl DialogPlayer {
             Some(myenum) => {
               match myenum.values.get(enum_value) {
                 Some(params) => {
+
                   for p in params {
-                    animator.set_parameter(&p.name, p.value);
+                    animator.set_parameter(&p.name, get_parameter_value(p, enum_map, animator));
                   }
                 }
                 None => warn!(
@@ -329,4 +330,37 @@ impl DialogPlayer {
       *iter = next;
     }
   }
+}
+
+fn get_parameter_value(p: &ParamValue, enum_map: &EnumMap, animator: &Animator) -> Value {
+    let inc = p
+        .modification
+        .as_ref()
+        .map(|m| {
+            let res = enum_map
+                .enums
+                .get(&m.lhs)
+                .and_then(|e| e.values.get(&m.rhs))
+                .is_some_and(|values| {
+                    values.iter().all(|v| {
+                        animator.is_parameter_equal_to_value(&v.name, &get_parameter_value(v, enum_map, animator))
+                    })
+                });
+
+            if res {
+                m.then
+            } else {
+                0.0
+            }
+        })
+        .unwrap_or(0.0);
+
+    match p.value {
+        Value::Fixed(v) => Value::Fixed(v + inc),
+        Value::Smooth { target, step, .. } => Value::Smooth {
+            actual: 0.0,
+            target: target + inc,
+            step,
+        },
+    }
 }
