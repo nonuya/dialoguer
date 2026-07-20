@@ -47,7 +47,7 @@ pub fn dialog_block_lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token<'a>>, Extr
   let block = choice((block_choicer, block_conversation)).map(Token::Block);
 
   let speaker = any::<&str, Extra>()
-    .filter(|c: &char| c.is_ascii_alphanumeric() || *c == '-')
+    .filter(|c: &char| c.is_ascii_alphanumeric() || *c == '-' || *c == '？')
     .repeated()
     .at_least(1)
     .to_slice()

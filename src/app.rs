@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs::File, path::PathBuf, rc::Rc};
+use std::{path::PathBuf, rc::Rc};
 
 use glutin::display::GlDisplay;
 use log::debug;
@@ -19,7 +19,8 @@ impl App {
       glow::Context::from_loader_function_cstr(|symbol| display.get_proc_address(symbol))
     });
 
-    let model_path = PathBuf::from("assets/models/iav_013_2");
+    // let model_path = PathBuf::from("assets/models/iav_024_2");
+    let model_path = PathBuf::from("assets/models/iav_014_2");
     debug!("Loading Scene for model '{}'", model_path.display());
     let scene = Scene::load_from_model_path(gl.clone(), model_path)?;
     debug!("SCENE LOADED");

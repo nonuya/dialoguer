@@ -264,7 +264,7 @@ impl DialogPlayer {
                 }
                 None => warn!(
                   "EnumValue '{}' doesn't exists in '{}'",
-                  enum_type, enum_value
+                  enum_value, enum_type
                 ),
               }
             }

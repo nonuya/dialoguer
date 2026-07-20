@@ -131,6 +131,10 @@ impl Animator {
     self.timer.is_some()
   }
 
+  pub fn stop_timer(&mut self) {
+    self.timer = None;
+  }
+
   pub fn update(&mut self, deltatime: f32, model: &mut Model) {
     if let Some(motion) = self.motion.as_mut() {
       motion.tick(deltatime as f64);
