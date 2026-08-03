@@ -1,6 +1,6 @@
 mod app;
-mod live2d;
 mod dialog;
+mod live2d;
 mod scene;
 
 use crate::app::App;
@@ -15,7 +15,7 @@ use glutin_winit::{DisplayBuilder, GlWindow};
 use log::{debug, error};
 use raw_window_handle::HasWindowHandle;
 use std::num::NonZeroU32;
-use std::time::Instant;
+use glow::HasContext;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
@@ -52,7 +52,13 @@ struct MainWindow {
   state: Option<AppState>,
   gl_context: Option<PossiblyCurrentContext>,
   gl_display: GlDisplayCreationState,
-  last_frame: Instant,
+  imgui_state: Option<ImGuiState>,
+}
+
+struct ImGuiState {
+  context: dear_imgui_rs::Context,
+  platform: dear_imgui_winit::WinitPlatform,
+  renderer: dear_imgui_glow::GlowRenderer,
 }
 
 impl ApplicationHandler for MainWindow {
@@ -115,7 +121,32 @@ impl ApplicationHandler for MainWindow {
     gl_context.make_current(&gl_surface).unwrap();
 
     if self.app.is_none() {
-      match App::new(&gl_config.display()) {
+      // Setup Dear ImGui
+      let mut context = dear_imgui_rs::Context::create();
+      context.set_ini_filename(None::<String>).unwrap();
+
+      let mut platform = dear_imgui_winit::WinitPlatform::new(&mut context);
+      platform.attach_window(&window, dear_imgui_winit::HiDpiMode::Default, &mut context);
+
+      // Create Glow context and renderer
+      let gl = unsafe {
+        glow::Context::from_loader_function_cstr(|s| {
+          gl_context.display().get_proc_address(s).cast()
+        })
+      };
+
+      let mut renderer = dear_imgui_glow::GlowRenderer::new(gl, &mut context).unwrap();
+      // Use sRGB framebuffer: enable FRAMEBUFFER_SRGB during ImGui rendering
+      renderer.set_framebuffer_srgb_enabled(true);
+      renderer.new_frame().unwrap();
+
+      self.imgui_state = Some(ImGuiState {
+        context,
+        platform,
+        renderer,
+      });
+
+      match App::new() {
         Ok(app) => self.app = Some(app),
         Err(err) => {
           error!("[Application] {:#}", err);
@@ -167,6 +198,14 @@ impl ApplicationHandler for MainWindow {
     _window_id: winit::window::WindowId,
     event: WindowEvent,
   ) {
+    if let Some(imgui) = self.imgui_state.as_mut()
+      && let Some(AppState { window, .. }) = self.state.as_ref()
+    {
+      imgui
+        .platform
+        .handle_window_event(&mut imgui.context, window, &event);
+    }
+
     match event {
       WindowEvent::Resized(size) if size.width != 0 && size.height != 0 => {
         // Some platforms like EGL require resizing GL surface to update the size
@@ -190,10 +229,7 @@ impl ApplicationHandler for MainWindow {
         }
       }
       WindowEvent::CloseRequested => event_loop.exit(),
-      WindowEvent::KeyboardInput {
-        event,
-        ..
-      } => self.app.as_mut().unwrap().keyboard(event),
+      WindowEvent::KeyboardInput { event, .. } => self.app.as_mut().unwrap().keyboard(event),
       _ => (),
     }
   }
@@ -212,17 +248,31 @@ impl ApplicationHandler for MainWindow {
     if let Some(AppState { gl_surface, window }) = self.state.as_ref() {
       let gl_context = self.gl_context.as_ref().unwrap();
       let app = self.app.as_mut().unwrap();
+      let imgui_state = self.imgui_state.as_mut().unwrap();
 
-      // Calculating Deltatime
-      let now = Instant::now();
-      let delta_time = now - self.last_frame;
-      self.last_frame = now;
+      imgui_state
+        .platform
+        .prepare_frame(&window, &mut imgui_state.context);
 
-      let dt = delta_time.as_secs_f32();
+      let ui = imgui_state.context.frame();
 
-      app.update(dt);
+      let gl = imgui_state.renderer.gl_context().unwrap();
+      unsafe {
+        // Enable sRGB write for clear on sRGB-capable surface
+        gl.enable(glow::FRAMEBUFFER_SRGB);
+        gl.clear_color(0.0, 0.0, 0.0, 1.0);
+        gl.clear(glow::COLOR_BUFFER_BIT);
+        gl.disable(glow::FRAMEBUFFER_SRGB);
+      }
 
-      app.draw();
+      app.draw(ui);
+
+      imgui_state.platform.prepare_render_with_ui(&ui, &window);
+      let draw_data = imgui_state.context.render();
+
+      imgui_state.renderer.new_frame().unwrap();
+      imgui_state.renderer.render(draw_data).unwrap();
+
       window.request_redraw();
 
       gl_surface.swap_buffers(gl_context).unwrap();
@@ -283,7 +333,7 @@ impl MainWindow {
       gl_context: None,
       state: None,
       app: None,
-      last_frame: Instant::now(),
+      imgui_state: None,
     }
   }
 }

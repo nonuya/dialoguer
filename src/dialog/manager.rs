@@ -305,7 +305,6 @@ impl DialogPlayer {
             }
             None => warn!("EnumType '{}' doesn't exists!", enum_type),
           }
-          animator.remove_parameter(enum_type);
           conversation_iter.events.pop_front();
           continue;
         }

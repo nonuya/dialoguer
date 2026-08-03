@@ -1,49 +1,45 @@
 use std::{path::PathBuf, rc::Rc};
 
+use dear_imgui_glow::GlowRenderer;
+use dear_imgui_rs::*;
 use glutin::display::GlDisplay;
 use log::debug;
 use winit::event::KeyEvent;
 
-use crate::scene::Scene;
-
 // TODO: Add Speed for Animations
 
-pub struct App {
-  gl: Rc<glow::Context>,
-  scene: Scene,
-}
+pub struct App {}
 
 impl App {
-  pub fn new(display: &impl GlDisplay) -> anyhow::Result<Self> {
-    let gl = Rc::new(unsafe {
-      glow::Context::from_loader_function_cstr(|symbol| display.get_proc_address(symbol))
-    });
-
-    // let model_path = PathBuf::from("assets/models/iav_024_2");
-    let model_path = PathBuf::from("assets/models/iav_014_2");
-    debug!("Loading Scene for model '{}'", model_path.display());
-    let scene = Scene::load_from_model_path(gl.clone(), model_path)?;
-    debug!("SCENE LOADED");
-    
-    Ok(Self {
-      gl,
-      scene,
-    })
+  pub fn new() -> anyhow::Result<Self> {
+    Ok(Self {})
   }
 
-  pub fn update(&mut self, deltatime: f32) {
-    self.scene.update(deltatime);
+  pub fn update(&mut self, deltatime: f32) {}
+
+  pub fn draw(&self, ui: &mut Ui) {
+    // Main window content
+    ui.window("Hello, Dear ImGui Glow!")
+      .size([400.0, 300.0], Condition::FirstUseEver)
+      .build(|| {
+        ui.text("Welcome to Dear ImGui with Glow backend!");
+        ui.separator();
+
+        ui.text(&format!(
+          "Application average {:.3} ms/frame ({:.1} FPS)",
+          1000.0 / ui.io().framerate(),
+          ui.io().framerate()
+        ));
+
+        // Toggle software cursor (ImGui-drawn cursor)
+        ui.text("Modern texture management features:");
+        ui.bullet_text("RENDERER_HAS_TEXTURES backend flag");
+        ui.bullet_text("Complete ImTextureData system");
+        ui.bullet_text("Texture registration and updates");
+      });
   }
 
-  pub fn draw(&self) {
-    self.scene.draw();
-  }
+  pub fn resize(&mut self, width: u32, height: u32) {}
 
-  pub fn resize(&mut self, width: u32, height: u32) {
-    self.scene.resize(width, height);
-  }
-
-  pub fn keyboard(&mut self, event: KeyEvent) {
-    self.scene.keyboard(event);
-  }
+  pub fn keyboard(&mut self, event: KeyEvent) {}
 }
