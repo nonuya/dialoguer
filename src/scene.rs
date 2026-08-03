@@ -80,7 +80,7 @@ impl Scene {
       dialog_mgr,
       dialog_player,
       enummap,
-      mpv: glam::Mat4::from_scale(vec3(2.0, 2.0, 1.0)),
+      mpv: glam::Mat4::from_scale(vec3(1.0, 1.0, 1.0)),
       animator: live2d::animator::Animator::new(),
     })
   }

@@ -121,8 +121,10 @@ impl ApplicationHandler for MainWindow {
     gl_context.make_current(&gl_surface).unwrap();
 
     if self.app.is_none() {
+      use dear_imgui_rs::ConfigFlags;
       // Setup Dear ImGui
       let mut context = dear_imgui_rs::Context::create();
+      context.io_mut().set_config_flags(ConfigFlags::DOCKING_ENABLE);
       context.set_ini_filename(None::<String>).unwrap();
 
       let mut platform = dear_imgui_winit::WinitPlatform::new(&mut context);
@@ -264,8 +266,8 @@ impl ApplicationHandler for MainWindow {
         gl.clear(glow::COLOR_BUFFER_BIT);
         gl.disable(glow::FRAMEBUFFER_SRGB);
       }
-
-      app.draw(ui);
+      
+      app.draw(ui, gl.clone());
 
       imgui_state.platform.prepare_render_with_ui(&ui, &window);
       let draw_data = imgui_state.context.render();
