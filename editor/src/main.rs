@@ -1,4 +1,6 @@
 mod app;
+mod layout;
+mod timeline;
 
 use crate::app::App;
 use glutin::config::{Config, ConfigTemplateBuilder, GetGlConfig};

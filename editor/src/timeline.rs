@@ -113,28 +113,7 @@ pub struct Timeline {
 impl Timeline {
   pub fn new() -> Self {
     Self {
-      containers: vec![Container {
-        id: 0,
-        name: "Who".into(),
-        blocks: vec![
-          TimelineBlock {
-            id: 0,
-            value: TimelineBlockType::Next,
-          },
-          TimelineBlock {
-            id: 1,
-            value: TimelineBlockType::Set,
-          },
-          TimelineBlock {
-            id: 2,
-            value: TimelineBlockType::Wait(1.0),
-          },
-          TimelineBlock {
-            id: 3,
-            value: TimelineBlockType::Text("Hola".into()),
-          },
-        ],
-      }],
+      containers: Vec::new(),
       drag: None,
       container_drag: None,
       selected_container_id: None,
@@ -279,13 +258,12 @@ impl Timeline {
         };
 
         let block = &self.containers[container_idx].blocks[block_idx];
-        let button_id = format!("##block_{}", block.id);
+        let button_id = format!("##{}_{}", container_id, block.id);
 
         ui.set_cursor_screen_pos(block_screen_pos);
         ui.invisible_button(&button_id, [BLOCK_WIDTH - 2.0, BLOCK_HEIGHT]);
 
         let is_active = ui.is_item_active();
-        let is_hovered = ui.is_item_hovered();
 
         if ui.is_item_clicked() {
           // Click en un bloque lo selecciona; el container "padre" queda seleccionado
