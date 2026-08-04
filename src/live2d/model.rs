@@ -3,7 +3,7 @@ use std::{collections::HashMap, path::PathBuf, rc::Rc};
 use anyhow::Context;
 use bytemuck::{Pod, Zeroable};
 use cubism::{
-  core::{Drawable, DynamicFlags}, error::CubismResult, model::UserModel, motion::Motion
+  core::{Drawable, DynamicFlags, ParameterIterMut}, error::CubismResult, model::UserModel, motion::Motion
 };
 use glow::HasContext;
 use log::debug;
@@ -99,6 +99,18 @@ impl Model {
 
   pub fn get_parameter_value(&self, id: &String) -> Option<f32> {
     self.parameters.get(id).and_then(|&idx| Some(self.cubism.parameter_at(idx).value))
+  }
+
+  pub fn get_parameters_iter(&mut self) -> ParameterIterMut {
+    self.cubism.model_mut().parameters_mut()
+  }
+
+  pub fn save_parameters(&mut self) {
+    self.cubism.save_parameters();
+  }
+
+  pub fn load_parameters(&mut self) {
+    self.cubism.load_parameters();
   }
 
   pub fn update_parameters(&mut self) {

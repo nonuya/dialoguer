@@ -6,7 +6,7 @@ use glam::vec3;
 use log::{debug, warn};
 use winit::{event::KeyEvent, keyboard::{KeyCode, PhysicalKey}};
 
-use crate::{dialog, live2d};
+use crate::{dialog, live2d::{self, Model, Renderer, config}};
 
 pub struct Scene {
   model: live2d::Model,
@@ -43,7 +43,7 @@ fn load_and_build_dialogs(dialog_path: &Path) -> anyhow::Result<(dialog::manager
 impl Scene {
   pub fn load_from_model_path(gl: Rc<glow::Context>,  model_path: PathBuf) -> anyhow::Result<Self> {
     let renderer =
-      live2d::Renderer::new(gl.clone())
+      live2d::Renderer::new(gl.clone(), config::MODEL_WIDTH, config::MODEL_HEIGHT)
       .context("Failed to create Live2D Renderer")?;
 
     let model_name = model_path
@@ -80,7 +80,7 @@ impl Scene {
       dialog_mgr,
       dialog_player,
       enummap,
-      mpv: glam::Mat4::from_scale(vec3(1.0, 1.0, 1.0)),
+      mpv: glam::Mat4::from_scale(vec3(2.0, 2.0, 1.0)),
       animator: live2d::animator::Animator::new(),
     })
   }
@@ -142,5 +142,13 @@ impl Scene {
 
   pub fn resize(&mut self, width: u32, height: u32) {
     self.renderer.resize(width, height);
+  }
+
+  pub fn renderer(&self) -> &Renderer {
+    &self.renderer
+  }
+
+  pub fn mut_model(&mut self) -> &mut Model {
+    &mut self.model
   }
 }

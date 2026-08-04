@@ -1,23 +1,84 @@
 use crate::live2d::{Model, config, shader::GlobalShaders};
+use anyhow::Context;
 use cubism::core::{ConstantFlags, DynamicFlags};
 use glow::HasContext;
 use std::rc::Rc;
 
 pub struct Renderer {
   shaders: GlobalShaders,
+  fbo: glow::Framebuffer,
+  texture: glow::Texture,
   gl: Rc<glow::Context>,
   width: u32,
   height: u32,
 }
 
 impl Renderer {
-  pub fn new(gl: Rc<glow::Context>) -> anyhow::Result<Self> {
+  pub fn new(gl: Rc<glow::Context>, width: u32, height: u32) -> anyhow::Result<Self> {
     let shaders = GlobalShaders::new(&gl)?;
 
-    Ok(Self { gl, shaders, width: 0, height: 0 })
+    let texture = unsafe {
+      gl.create_texture()
+        .map_err(anyhow::Error::msg)
+        .context("Failed to create texture for render Model")?
+    };
+
+    unsafe {
+      // 1. Crear la textura donde vas a "pintar"
+      gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+      gl.tex_image_2d(
+        glow::TEXTURE_2D,
+        0,
+        glow::RGBA8 as i32,
+        width as i32,
+        height as i32,
+        0,
+        glow::RGBA,
+        glow::UNSIGNED_BYTE,
+        glow::PixelUnpackData::Slice(None),
+      );
+      gl.tex_parameter_i32(
+        glow::TEXTURE_2D,
+        glow::TEXTURE_MIN_FILTER,
+        glow::LINEAR as i32,
+      );
+      gl.tex_parameter_i32(
+        glow::TEXTURE_2D,
+        glow::TEXTURE_MAG_FILTER,
+        glow::LINEAR as i32,
+      );
+      gl.bind_texture(glow::TEXTURE_2D, None);
+    }
+
+    let fbo = unsafe {
+      gl.create_framebuffer()
+        .map_err(anyhow::Error::msg)
+        .context("Failed to create framebuffer for render Model")?
+    };
+    unsafe {
+      gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+      gl.framebuffer_texture(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, Some(texture), 0);
+
+      anyhow::ensure!(gl.check_framebuffer_status(glow::FRAMEBUFFER) == glow::FRAMEBUFFER_COMPLETE);
+
+      gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+    }
+
+    Ok(Self {
+      gl,
+      shaders,
+      width,
+      height,
+      texture,
+      fbo,
+    })
   }
 
   pub fn resize(&mut self, width: u32, height: u32) {
+    if width == 0 || height == 0 {
+      return;
+    }
+
     self.width = width;
     self.height = height;
   }
@@ -25,6 +86,10 @@ impl Renderer {
   pub fn draw(&self, model: &Model, mvp: &glam::Mat4) {
     self.draw_masks(model);
     self.draw_model(model, mvp);
+  }
+
+  pub fn tex(&self) -> glow::Texture {
+    self.texture
   }
 
   fn draw_masks(&self, model: &Model) {
@@ -79,7 +144,9 @@ impl Renderer {
           // framebuffer
           //-------------------------
 
-          let fb = clipping_manager.get_offscreen_by_idx(cc.get_offscreen_index()).framebuffer;
+          let fb = clipping_manager
+            .get_offscreen_by_idx(cc.get_offscreen_index())
+            .framebuffer;
 
           self.gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fb));
 
@@ -137,15 +204,10 @@ impl Renderer {
           self
             .gl
             .uniform_4_f32(shader.screen_color.as_ref(), 0.0, 0.0, 0.0, 0.0);
-          
 
           model.get_mesh_by_index(draw_index).draw(&self.gl);
         }
       }
-    }
-
-    unsafe {
-      self.gl.bind_framebuffer(glow::FRAMEBUFFER, None);
     }
   }
 
@@ -153,9 +215,11 @@ impl Renderer {
     let clipping_manager = model.get_clipping_manager();
 
     unsafe {
-      self.gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+      self.gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo));
 
-      self.gl.viewport(0, 0, self.width as i32, self.height as i32);
+      self
+        .gl
+        .viewport(10, 0, self.width as i32, self.height as i32);
 
       self.gl.enable(glow::BLEND);
       self.gl.disable(glow::DEPTH_TEST);
@@ -271,6 +335,10 @@ impl Renderer {
       // model.get_mesh_by_index(drawable.index).draw(&self.gl);
       model.get_mesh_by_index(drawable.index).draw(&self.gl);
     }
+
+    unsafe {
+      self.gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+    }
   }
 
   unsafe fn set_blend_mode(gl: &glow::Context, cflags: ConstantFlags) {
@@ -301,6 +369,8 @@ impl Renderer {
 impl Drop for Renderer {
   fn drop(&mut self) {
     unsafe {
+      self.gl.delete_texture(self.texture);
+      self.gl.delete_framebuffer(self.fbo);
       self.gl.delete_program(self.shaders.setup.program);
       self.gl.delete_program(self.shaders.normal.program);
       self.gl.delete_program(self.shaders.masked.program);

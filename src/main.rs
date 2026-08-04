@@ -15,7 +15,7 @@ use glutin_winit::{DisplayBuilder, GlWindow};
 use log::{debug, error};
 use raw_window_handle::HasWindowHandle;
 use std::num::NonZeroU32;
-use glow::HasContext;
+use std::path::PathBuf;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
@@ -138,17 +138,10 @@ impl ApplicationHandler for MainWindow {
       };
 
       let mut renderer = dear_imgui_glow::GlowRenderer::new(gl, &mut context).unwrap();
-      // Use sRGB framebuffer: enable FRAMEBUFFER_SRGB during ImGui rendering
-      renderer.set_framebuffer_srgb_enabled(true);
+      renderer.set_framebuffer_srgb_enabled(false);
       renderer.new_frame().unwrap();
 
-      self.imgui_state = Some(ImGuiState {
-        context,
-        platform,
-        renderer,
-      });
-
-      match App::new() {
+      match App::new(PathBuf::from("assets/models/iav_013_2"), &mut renderer) {
         Ok(app) => self.app = Some(app),
         Err(err) => {
           error!("[Application] {:#}", err);
@@ -156,6 +149,12 @@ impl ApplicationHandler for MainWindow {
           return;
         }
       }
+
+      self.imgui_state = Some(ImGuiState {
+        context,
+        platform,
+        renderer,
+      });
     }
 
     // Try setting vsync.
@@ -257,17 +256,9 @@ impl ApplicationHandler for MainWindow {
         .prepare_frame(&window, &mut imgui_state.context);
 
       let ui = imgui_state.context.frame();
-
-      let gl = imgui_state.renderer.gl_context().unwrap();
-      unsafe {
-        // Enable sRGB write for clear on sRGB-capable surface
-        gl.enable(glow::FRAMEBUFFER_SRGB);
-        gl.clear_color(0.0, 0.0, 0.0, 1.0);
-        gl.clear(glow::COLOR_BUFFER_BIT);
-        gl.disable(glow::FRAMEBUFFER_SRGB);
-      }
       
-      app.draw(ui, gl.clone());
+      app.update(ui.io().delta_time());
+      app.draw(ui);
 
       imgui_state.platform.prepare_render_with_ui(&ui, &window);
       let draw_data = imgui_state.context.render();

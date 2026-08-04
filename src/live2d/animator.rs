@@ -18,7 +18,7 @@ pub struct EnumMap {
   pub enums: HashMap<String, EnumType>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 pub struct EnumType {
   pub values: HashMap<String, Vec<ParamValue>>,
 }
@@ -89,6 +89,10 @@ impl Animator {
 
         lhs == rhs
       })
+  }
+
+  pub fn clear_parameters(&mut self) {
+    self.map.clear();
   }
 
   pub fn set_parameter(&mut self, id: &String, mut value: Value) {
