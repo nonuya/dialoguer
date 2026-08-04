@@ -3,7 +3,7 @@ use glam::{Mat4, Vec3};
 use glow::HasContext;
 use std::{collections::HashMap, rc::Rc};
 
-use crate::live2d::{config, rectf::RectF};
+use crate::{config, rectf::RectF};
 
 #[derive(Default)]
 pub struct ClippingContext {
@@ -20,6 +20,7 @@ pub struct ClippingContext {
 
 impl ClippingContext {
   pub fn get_draw_indices(&self) -> &Vec<i32> {
+
     &self.ids
   }
 

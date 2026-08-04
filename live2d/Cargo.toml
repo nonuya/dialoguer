@@ -1,0 +1,15 @@
+[package]
+name = "live2d"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.103"
+glow = "0.17.0"
+env_logger = "0.11.11"
+cubism = { git = "https://github.com/Veykril/cubism-rs"}
+bytemuck = { version = "1.25.1", features = ["derive"] }
+glam = "0.33.2"
+serde = { version = "1.0.228", features = ["derive"] }
+ron = "0.12.2"
+log = "0.4.33"

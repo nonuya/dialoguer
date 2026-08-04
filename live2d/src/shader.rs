@@ -11,10 +11,10 @@ const FRAGMENT_SHADER_SRC_MASK_INVERTED: &str =
   include_str!("./shaders/FragShaderSrcMaskInverted.frag");
 
 pub struct GlobalShaders {
-  pub(in crate::live2d) setup: Shader,
-  pub(in crate::live2d) normal: Shader,
-  pub(in crate::live2d) masked: Shader,
-  pub(in crate::live2d) inverted_mask: Shader,
+  pub(crate) setup: Shader,
+  pub(crate) normal: Shader,
+  pub(crate) masked: Shader,
+  pub(crate) inverted_mask: Shader,
 }
 
 impl GlobalShaders {

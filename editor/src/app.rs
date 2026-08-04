@@ -4,8 +4,6 @@ use dear_imgui_rs::*;
 use std::{fs::File, path::PathBuf, rc::Rc};
 use winit::event::KeyEvent;
 
-use crate::live2d;
-
 const BLOCK_WIDTH: f32 = 80.0;
 const BLOCK_HEIGHT: f32 = 40.0;
 const HEADER_HEIGHT: f32 = 22.0;

@@ -1,7 +1,4 @@
 mod app;
-mod dialog;
-mod live2d;
-mod scene;
 
 use crate::app::App;
 use glutin::config::{Config, ConfigTemplateBuilder, GetGlConfig};

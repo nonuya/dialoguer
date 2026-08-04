@@ -8,7 +8,7 @@ use cubism::{
 use glow::HasContext;
 use log::debug;
 
-use crate::live2d::{
+use crate::{
   clipping_manager::ClippingManager, config, texture::load_texture_from_astc_path,
 };
 
@@ -124,23 +124,23 @@ impl Model {
     }
   }
 
-  pub(in crate::live2d) fn get_clipping_manager(&self) -> &ClippingManager {
+  pub(crate) fn get_clipping_manager(&self) -> &ClippingManager {
     &self.clipping_manager
   }
 
-  pub(in crate::live2d) fn get_drawable_dynamic_flag(&self, drawable_index: usize) -> DynamicFlags {
+  pub(crate) fn get_drawable_dynamic_flag(&self, drawable_index: usize) -> DynamicFlags {
     self.cubism.drawable_dynamic_flags()[drawable_index]
   }
 
-  pub(in crate::live2d) fn get_texture(&self) -> &glow::Texture {
+  pub(crate) fn get_texture(&self) -> &glow::Texture {
     &self.texture
   }
 
-  pub(in crate::live2d) fn get_mesh_by_index(&self, drawable_index: usize) -> &Mesh {
+  pub(crate) fn get_mesh_by_index(&self, drawable_index: usize) -> &Mesh {
     &self.meshes[drawable_index]
   }
 
-  pub(in crate::live2d) fn get_sorted_drawables(&self) -> Vec<Drawable<'_>> {
+  pub(crate) fn get_sorted_drawables(&self) -> Vec<Drawable<'_>> {
     let mut drawables: Vec<_> = self.cubism.drawables().collect();
     drawables.sort_unstable_by_key(|d| d.render_order);
     drawables

@@ -1,9 +1,9 @@
 use std::{collections::HashMap, fs, path::{Path, PathBuf}};
 
-use crate::live2d::Model;
+use crate::Model;
 use anyhow::Context;
 use cubism::motion::Motion;
-use log::{debug, warn};
+use log::warn;
 use serde::{Deserialize, Serialize};
 
 pub struct Animator {
@@ -11,7 +11,6 @@ pub struct Animator {
   timer: Option<f32>,
   map: HashMap<String, Value>,
 }
-
 
 #[derive(Serialize, Deserialize)]
 pub struct EnumMap {
