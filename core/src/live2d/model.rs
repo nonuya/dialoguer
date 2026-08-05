@@ -8,7 +8,7 @@ use cubism::{
 use glow::HasContext;
 use log::debug;
 
-use crate::{
+use crate::live2d::{
   clipping_manager::ClippingManager, config, texture::load_texture_from_astc_path,
 };
 

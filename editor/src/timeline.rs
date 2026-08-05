@@ -23,7 +23,7 @@ impl TimelineBlock {
     border_color: [f32; 4],
   ) {
     let (name, color) = match self.value {
-      TimelineBlockType::Set => (
+      TimelineBlockType::Set{..} => (
         "Set",
         [0.20, 0.45, 0.78, 1.0], // Azul
       ),
@@ -62,16 +62,25 @@ impl TimelineBlock {
 }
 
 pub enum TimelineBlockType {
-  Set,
+  Set{
+    parameters: Vec<(String, String)>, // EnumName ValueName
+    anim: String,
+  },
   Text(String),
   Wait(f32),
   Next,
 }
 
+impl TimelineBlockType {
+  pub fn empty_set() -> Self {
+    TimelineBlockType::Set { parameters: Vec::new(), anim: String::new() }
+  }
+}
+
 pub struct Container {
   pub id: usize,
   pub name: String,
-  blocks: Vec<TimelineBlock>,
+  pub blocks: Vec<TimelineBlock>,
 }
 
 impl Container {

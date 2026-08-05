@@ -3,7 +3,7 @@ use glam::{Mat4, Vec3};
 use glow::HasContext;
 use std::{collections::HashMap, rc::Rc};
 
-use crate::{config, rectf::RectF};
+use crate::live2d::{config, rectf::RectF};
 
 #[derive(Default)]
 pub struct ClippingContext {

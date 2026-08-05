@@ -9,11 +9,11 @@ use crate::{layout::{EditorContext, Layout}, timeline::Timeline};
 pub struct App {
   gl: Rc<glow::Context>,
   texture_id: TextureId,
-  model: live2d::Model,
-  enummap: live2d::animator::EnumMap,
+  model: core::live2d::Model,
+  enummap: core::live2d::animator::EnumMap,
   mvp: glam::Mat4,
-  model_renderer: live2d::Renderer,
-  animator: live2d::animator::Animator,
+  model_renderer: core::live2d::Renderer,
+  animator: core::live2d::animator::Animator,
   layout: Layout,
 }
 
@@ -34,17 +34,17 @@ impl App {
       "Failed to parse '{}.model3.json'",
       model_name.display()
     ))?;
-    let mut model = live2d::Model::new(gl.clone(), &model_path, &model3)?;
+    let mut model = core::live2d::Model::new(gl.clone(), &model_path, &model3)?;
     model.save_parameters();
 
     let mut enummap_path = model_path.join(model_name);
     enummap_path.set_extension("map");
-    let enummap = live2d::animator::load_enum_map(&enummap_path)?;
+    let enummap = core::live2d::animator::load_enum_map(&enummap_path)?;
 
-    let model_renderer = live2d::Renderer::new(
+    let model_renderer = core::live2d::Renderer::new(
       gl.clone(),
-      live2d::config::MODEL_WIDTH,
-      live2d::config::MODEL_HEIGHT,
+      core::live2d::config::MODEL_WIDTH,
+      core::live2d::config::MODEL_HEIGHT,
     )
     .context("Failed to create Live2D Renderer")?;
 
@@ -60,7 +60,7 @@ impl App {
       enummap,
       mvp: glam::Mat4::from_scale(glam::vec3(2.0, 2.0, 1.0)),
       model_renderer,
-      animator: live2d::animator::Animator::new(),
+      animator: core::live2d::animator::Animator::new(),
       layout: Layout::new(),
     })
   }

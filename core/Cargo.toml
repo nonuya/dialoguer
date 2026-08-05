@@ -1,5 +1,5 @@
 [package]
-name = "live2d"
+name = "core"
 version = "0.1.0"
 edition = "2024"
 
@@ -13,3 +13,4 @@ glam = "0.33.2"
 serde = { version = "1.0.228", features = ["derive"] }
 ron = "0.12.2"
 log = "0.4.33"
+chumsky = "0.13.0"

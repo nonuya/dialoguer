@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fs, path::{Path, PathBuf}};
 
-use crate::Model;
+use crate::live2d::Model;
 use anyhow::Context;
 use cubism::motion::Motion;
 use log::warn;

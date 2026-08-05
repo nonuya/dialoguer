@@ -3,9 +3,9 @@ use dear_imgui_rs::*;
 use crate::timeline::{Selection, Timeline, TimelineBlockType};
 
 pub struct EditorContext<'a> {
-  pub model: &'a mut live2d::Model,
-  pub animator: &'a mut live2d::animator::Animator,
-  pub enummap: &'a mut live2d::animator::EnumMap,
+  pub model: &'a mut core::live2d::Model,
+  pub animator: &'a mut core::live2d::animator::Animator,
+  pub enummap: &'a mut core::live2d::animator::EnumMap,
 }
 
 pub struct Layout {
@@ -165,7 +165,7 @@ impl Layout {
 
     if let Some((enum_name, value_name)) = &self.selected_enum {
       ui.window("Inspector").build(|| {
-        use live2d::animator::Value;
+        use core::live2d::animator::Value;
 
         // Listc
         if let Some(r#enum) = ctx.enummap.enums.get_mut(enum_name)
@@ -341,7 +341,8 @@ impl Layout {
                 }
               }
               Selection::Container(container) => {
-                if ui.button("Play Container") {}
+                if ui.button("Play Container") {
+                }
 
                 ui.same_line();
 
@@ -364,7 +365,7 @@ impl Layout {
                 ui.same_line();
 
                 if ui.button("(S)et") || (ui.io().key_alt() && ui.is_key_pressed(Key::S)) {
-                  container.add_block(TimelineBlockType::Set);
+                  container.add_block(TimelineBlockType::empty_set());
                 }
 
                 ui.same_line();
@@ -418,7 +419,6 @@ impl Layout {
                   ui.text("Wait:");
                   ui.same_line();
 
-                  ui.set_next_item_width(100.0);
                   ui.input_float_config("##wait_seconds")
                     .step(0.1)
                     .build(seconds);
@@ -426,20 +426,95 @@ impl Layout {
                   ui.same_line();
                   ui.text("seconds");
                 }
-                TimelineBlockType::Set => {
+                TimelineBlockType::Set { parameters, anim } => {
+                  let mut remove_index: Option<usize> = None;
+
+                  ui.text("Parameters");
+                  ui.separator();
+
+                  for (idx, entry) in parameters.iter_mut().enumerate() {
+                    let _ = ui.push_id(idx as i32);
+
+                    // --- Texto (nombre de la entrada) ---
+                    ui.text(&entry.0);
+                    ui.same_line();
+
+                    // --- Combobox (tipo de valor) ---
+                    ui.set_next_item_width(100.0);
+                    match ctx.enummap.enums.get(&entry.0) {
+                      Some(enumtype) => {
+                        if let Some(_) =
+                          ui.begin_combo(format!("##{}_{}", &entry.0, &entry.1), &entry.1)
+                        {
+                          for value in &enumtype.values {
+                            let selected = entry.1 == *value.0;
+                            if ui.selectable_config(value.0).selected(selected).build() {
+                              entry.1 = value.0.clone();
+                            }
+                          }
+                        }
+                      }
+                      None => ui.text("Unknown Enum"),
+                    }
+                    ui.same_line();
+
+                    // --- Botón "x" (eliminar fila) ---
+                    if ui.button("x") {
+                      remove_index = Some(idx);
+                    }
+                  }
+
+                  if let Some(idx) = remove_index {
+                    parameters.remove(idx);
+                  }
+
                   ui.spacing();
 
                   // --- Botón "+" al final: abre un combobox para elegir qué agregar ---
-                  if ui.button("+") {
+                  if ui.button_with_size("+", [ui.content_region_avail()[0], 0.0]) {
                     ui.open_popup("##add_entry_popup");
                   }
 
                   if let Some(_) = ui.begin_popup("##add_entry_popup") {
                     for prop_name in ctx.enummap.enums.keys() {
-                      if ui.selectable(prop_name) {
+                      if ui.selectable_config(prop_name).size([0.0, 0.0]).build() {
+                        parameters.push((prop_name.clone(), String::new()));
                         ui.close_current_popup();
                       }
                     }
+                  }
+
+                  ui.spacing();
+                  ui.spacing();
+
+                  ui.text("Animation");
+                  ui.separator();
+
+                  let preview = if anim.is_empty() {
+                    "(Unchanged)"
+                  } else {
+                    anim.as_str()
+                  };
+
+                  ui.set_next_item_width(ui.content_region_avail()[0]);
+                  if let Some(_) = ui.begin_combo("##anim_combo", preview) {
+                    // Opción vacía = sin cambios
+                    let unchanged_selected = anim.is_empty();
+                    if ui
+                      .selectable_config("(Unchanged)")
+                      .selected(unchanged_selected)
+                      .build()
+                    {
+                      anim.clear();
+                    }
+
+                    /*
+                    for anim_name in &ctx.animations {
+                      let selected = anim == anim_name;
+                      if ui.selectable_config(anim_name).selected(selected).build() {
+                        *anim = anim_name.clone();
+                      }
+                    }*/
                   }
                 }
                 _ => {}

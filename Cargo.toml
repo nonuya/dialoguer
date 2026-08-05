@@ -1,6 +1,6 @@
 [workspace]
 members = [
   "editor",
-  "live2d"
+  "core"
 ]
 resolver = "3"
