@@ -1,4 +1,6 @@
-use core::dialog::DialogNode;
+use std::collections::HashMap;
+
+use anyhow::Context;
 use dear_imgui_rs::*;
 use dear_node_editor::*;
 
@@ -6,18 +8,21 @@ pub struct Graph {
   nodes: Vec<Node>,
   links: Vec<Link>,
   id_gen: IdGen,
+  selected_node_id: Option<NodeId>,
 }
 
-enum Node {
+#[derive(Debug)]
+pub enum Node {
   Conversation {
     id: NodeId,
-    dialog: DialogNode,
+    name: String,
     input: PinId,
     output: PinId,
   },
   Choicer {
     id: NodeId,
-    options: Vec<String>, // TODO: Change to DialogNode?
+    name: String,
+    options: Vec<String>,
     input: PinId,
     outputs: Vec<PinId>,
   },
@@ -32,6 +37,7 @@ impl Node {
   }
 }
 
+// FIXME: Cambiar a HashMap
 struct Link {
   id: LinkId,
   from: PinId,
@@ -69,107 +75,35 @@ impl IdGen {
 
 impl Graph {
   pub fn new() -> Self {
-    let mut id_gen = IdGen::new();
-
-    let conv1 = Node::Conversation {
-      id: id_gen.next_node(),
-      dialog: DialogNode {
-        label: "Hello!".into(),
-        events: vec![],
-      },
-      input: id_gen.next_pin(),
-      output: id_gen.next_pin(),
-    };
-
-    let choice = Node::Choicer {
-      id: id_gen.next_node(),
-      input: id_gen.next_pin(),
-      outputs: vec![id_gen.next_pin(), id_gen.next_pin()],
-      options: vec!["Yes".into(), "No".into()],
-    };
-
-    let conv2 = Node::Conversation {
-      id: id_gen.next_node(),
-      dialog: DialogNode {
-        label: "Great!".into(),
-        events: vec![],
-      },
-      input: id_gen.next_pin(),
-      output: id_gen.next_pin(),
-    };
-
-    let conv3 = Node::Conversation {
-      id: id_gen.next_node(),
-      dialog: DialogNode {
-        label: "Too bad.".into(),
-        events: vec![],
-      },
-      input: id_gen.next_pin(),
-      output: id_gen.next_pin(),
-    };
-
-    let links = vec![
-      Link {
-        id: id_gen.next_link(),
-        from: match &conv1 {
-          Node::Conversation { output, .. } => *output,
-          _ => unreachable!(),
-        },
-        to: match &choice {
-          Node::Choicer { input, .. } => *input,
-          _ => unreachable!(),
-        },
-      },
-      Link {
-        id: id_gen.next_link(),
-        from: match &choice {
-          Node::Choicer { outputs, .. } => outputs[0],
-          _ => unreachable!(),
-        },
-        to: match &conv2 {
-          Node::Conversation { input, .. } => *input,
-          _ => unreachable!(),
-        },
-      },
-      Link {
-        id: id_gen.next_link(),
-        from: match &choice {
-          Node::Choicer { outputs, .. } => outputs[1],
-          _ => unreachable!(),
-        },
-        to: match &conv3 {
-          Node::Conversation { input, .. } => *input,
-          _ => unreachable!(),
-        },
-      },
-    ];
-
     Self {
-      nodes: vec![conv1, choice, conv2, conv3],
-      links,
-      id_gen,
+      selected_node_id: None,
+      nodes: Vec::new(),
+      links: Vec::new(),
+      id_gen: IdGen::new(),
     }
   }
 
-  fn add_conversation(&mut self, dialog: DialogNode) -> NodeId {
+  fn add_conversation(&mut self, name: String) -> NodeId {
     let id = self.id_gen.next_node();
     let input = self.id_gen.next_pin();
     let output = self.id_gen.next_pin();
     self.nodes.push(Node::Conversation {
       id,
-      dialog,
+      name,
       input,
       output,
     });
     id
   }
 
-  fn add_choicer(&mut self, options: Vec<String>) -> NodeId {
+  fn add_choicer(&mut self, name: String) -> NodeId {
     let id = self.id_gen.next_node();
     let input = self.id_gen.next_pin();
+    let options = Vec::new();
     let outputs = options.iter().map(|_| self.id_gen.next_pin()).collect();
     self.nodes.push(Node::Choicer {
       id,
+      name,
       options,
       input,
       outputs,
@@ -189,50 +123,80 @@ impl Graph {
     }
   }
 
-  pub fn draw(&mut self, ui: &Ui, node_editor: &EditorContext) {
-    let available = ui.content_region_avail();
-    let right_panel_width = 300.0;
-    let left_panel_width = (available[0] - right_panel_width).max(100.0);
-
-    // --- Panel izquierdo: el graph ---
-    ui.child_window("##graph_panel")
-      .size([left_panel_width, available[1]])
-      .border(true)
-      .build(ui, || {
-        self.draw_graph(ui, node_editor);
-      });
-
+  pub fn draw(
+    &mut self,
+    ui: &Ui,
+    node_editor: &EditorContext,
+    on_add_node: impl FnOnce(NodeId) -> (),
+    on_selected_node: impl FnOnce(Option<NodeId>) -> (),
+    on_deleted_node: impl FnOnce(NodeId) -> (),
+  ) {
+    if ui.button("Add Conversation (Z)") || (ui.io().key_alt() && ui.is_key_pressed(Key::Z)) {
+      on_add_node(self.add_conversation(format!("Conversation {}", self.id_gen.0)));
+    }
     ui.same_line();
+    if ui.button("Add Choicer (X)") || (ui.io().key_alt() && ui.is_key_pressed(Key::X)) {
+      self.add_choicer(format!("Choicer {}", self.id_gen.0));
+    }
 
-    // --- Panel derecho: inspector / detalles ---
-    ui.child_window("##inspector_panel")
-      .size([right_panel_width, available[1]])
-      .border(true)
-      .build(ui, || {
-        ui.text("Inspector");
-        ui.separator();
-      });
+    let mut pending_deleting = None;
+
+    if let Some(id) = self.selected_node_id {
+      ui.same_line();
+
+      if ui.button("(D)elete") || (ui.io().key_alt() && ui.is_key_pressed(Key::D)) {
+        if let Some(index) = self.nodes.iter().position(|n| n.id() == id) {
+          let pins: Vec<PinId> = match &self.nodes[index] {
+            Node::Conversation { input, output, .. } => {
+              vec![*input, *output]
+            }
+            Node::Choicer { input, outputs, .. } => {
+              let mut pins = Vec::with_capacity(outputs.len() + 1);
+              pins.push(*input);
+              pins.extend(outputs.iter().copied());
+              pins
+            }
+          };
+
+          self
+            .links
+            .retain(|link| !pins.contains(&link.from) && !pins.contains(&link.to));
+
+          pending_deleting = Some(index);
+        }
+      }
+    }
+
+    self.draw_graph(
+      ui,
+      &node_editor,
+      pending_deleting,
+      on_selected_node,
+      on_deleted_node,
+    );
   }
 
-  pub fn draw_graph(&mut self, ui: &Ui, node_editor: &EditorContext) {
+  pub fn draw_graph(
+    &mut self,
+    ui: &Ui,
+    node_editor: &EditorContext,
+    mut pending_deleting: Option<usize>,
+    on_selected_node: impl FnOnce(Option<NodeId>) -> (),
+    on_deleted_node: impl FnOnce(NodeId) -> (),
+  ) {
     let editor = ui.node_editor(node_editor, "DialogueGraph", [0.0, 0.0]);
     let mut pending_new_option: Option<NodeId> = None;
     let mut pending_delete_option: Option<(NodeId, usize)> = None;
 
-    for node in &self.nodes {
+    for node in &mut self.nodes {
       match node {
-        Node::Conversation {
-          id,
-          dialog,
-          input,
-          output,
-        } => {
+        Node::Conversation { id, name, input, output } => {
           editor.node(*id, |node| {
             node.pin(*input, PinKind::Input, |_pin| {
               ui.text(" * ");
             });
             ui.same_line();
-            ui.text("Conversation");
+            ui.text(name);
             ui.same_line();
             node.pin(*output, PinKind::Output, |_pin| {
               ui.text(" * ");
@@ -241,6 +205,7 @@ impl Graph {
         }
         Node::Choicer {
           id,
+          name,
           options,
           input,
           outputs,
@@ -250,21 +215,23 @@ impl Graph {
               ui.text(" * ");
             });
             ui.same_line();
-            ui.text("Choicer");
+            ui.text(name);
 
-            for (idx, (opt, pin_id)) in options.iter().zip(outputs.iter()).enumerate() {
+            for (idx, (opt, pin_id)) in options.iter_mut().zip(outputs.iter()).enumerate() {
               let _id = ui.push_id(pin_id.0);
               if ui.button("X") {
                 pending_delete_option = Some((*id, idx));
               }
               ui.same_line();
-              ui.text(opt);
+              ui.set_next_item_width(300.0);
+              ui.input_text("##option", opt).build();
               ui.same_line();
               node.pin(*pin_id, PinKind::Output, |_pin| {
                 ui.text(" * ");
               });
             }
 
+            let _id = ui.push_id(format!("##add_{}", id.0).as_str());
             if ui.button_with_size("+", [50.0, 0.0]) {
               pending_new_option = Some(*id);
             }
@@ -322,8 +289,6 @@ impl Graph {
       }
     }
 
-    editor.end();
-
     // --- Aplicar el "+" pendiente después de terminar el frame del editor ---
     if let Some(node_id) = pending_new_option {
       let next_idx = self
@@ -337,6 +302,33 @@ impl Graph {
         .unwrap_or(0);
       self.add_choicer_option(node_id, format!("Choice {}", next_idx));
     }
+
+    if let Some(index) = pending_deleting.take() {
+      on_deleted_node(self.nodes[index].id());
+      self.nodes.remove(index);
+      self.selected_node_id = None;
+      editor.clear_selection();
+    }
+
+    let current_selection = match editor.selected_nodes().as_slice() {
+      [id] => Some(*id),
+      _ => None,
+    };
+
+    if self.selected_node_id != current_selection {
+      self.selected_node_id = current_selection;
+      on_selected_node(current_selection);
+    }
+
+    editor.end();
+  }
+
+  pub fn get_node_by_id(&self, id: NodeId) -> Option<&Node> {
+    self.nodes.iter().find(|n| n.id() == id)
+  }
+
+  pub fn get_mut_node_by_id(&mut self, id: NodeId) -> Option<&mut Node> {
+    self.nodes.iter_mut().find(|n| n.id() == id)
   }
 
   /// Determina cuál de los dos pines involucrados en un drag es el de
@@ -372,5 +364,44 @@ impl Graph {
       (Some(PinKind::Input), Some(PinKind::Output)) => Some((b, a)),
       _ => None, // mismo tipo en ambos extremos, o pin desconocido: link inválido
     }
+  }
+
+  pub fn export_to_dialog(
+    &self,
+    id: NodeId,
+    timelines: &HashMap<NodeId, crate::timeline::Timeline>,
+  ) -> anyhow::Result<()> {
+    let node = self
+      .get_node_by_id(id)
+      .context("Failed to get Node by Id")?;
+
+    match node {
+      Node::Conversation { id, name, input, output } => {
+        let timeline = timelines.get(id).context("Failed to get Timeline")?;
+        let dialog = timeline.export_to_dialog();
+        let next = self.follow(*output);
+        println!("Next: {:#?}", next);
+
+        println!("{:#?}", dialog);
+      }
+      Node::Choicer {
+        id,
+        name,
+        options,
+        input,
+        outputs,
+      } => {}
+    }
+
+    Ok(())
+  }
+
+  fn follow(&self, output: PinId) -> Option<&Node> {
+    let to = self.links.iter().find(|link| link.from == output)?.to;
+
+    self.nodes.iter().find(|node| match node {
+      Node::Conversation { input, .. } => *input == to,
+      Node::Choicer { input, .. } => *input == to,
+    })
   }
 }

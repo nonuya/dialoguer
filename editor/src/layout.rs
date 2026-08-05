@@ -1,7 +1,12 @@
-use dear_imgui_rs::*;
-use dear_node_editor::NodeEditorUiExt;
+use std::collections::HashMap;
 
-use crate::{graph::Graph, timeline::{Selection, Timeline, TimelineBlockType}};
+use dear_imgui_rs::*;
+use dear_node_editor::NodeId;
+
+use crate::{
+  graph::Graph,
+  timeline::{Selection, Timeline, TimelineBlockType},
+};
 
 pub struct EditorContext<'a> {
   pub model: &'a mut core::live2d::Model,
@@ -17,7 +22,9 @@ pub struct Layout {
   open_modal: bool,
   node_editor: dear_node_editor::EditorContext,
   graph: Graph,
-  timeline: Timeline, // Unique
+  timelines: HashMap<NodeId, Timeline>,
+  selected_node_id: Option<NodeId>,     // For Preview
+  selected_timeline_id: Option<NodeId>, // For Timeline
   is_main_layout: bool,
   selected_enum: Option<(String, String)>,
   enumlog: Vec<(String, String)>,
@@ -33,7 +40,9 @@ impl Layout {
       is_main_layout: true,
       graph: Graph::new(),
       open_modal: false,
-      timeline: Timeline::new(),
+      timelines: HashMap::new(),
+      selected_timeline_id: None,
+      selected_node_id: None,
       new_modal_string: String::new(),
     }
   }
@@ -62,6 +71,8 @@ impl Layout {
         }
       });
     }
+
+    ui.text(format!("{}", ui.io().framerate()));
 
     if self.is_main_layout {
       self.draw_dialogue_layout(ui, ctx);
@@ -114,7 +125,6 @@ impl Layout {
           let (dock_enums, dock_right) =
             DockBuilder::split_node(ui, dock_bottom, SplitDirection::Left, 0.50);
 
-          // Inspector arriba, nueva ventana abajo
           let (dock_inspector, dock_enumlog) =
             DockBuilder::split_node(ui, dock_right, SplitDirection::Up, 0.70);
 
@@ -273,8 +283,12 @@ impl Layout {
           let (dock_timeline, dock_properties) =
             DockBuilder::split_node(ui, dock_bottom, SplitDirection::Left, 0.70);
 
-          DockBuilder::dock_window(ui, "Preview", dock_preview);
-          DockBuilder::dock_window(ui, "Graph", dock_preview);
+          let (dock_preview_left, dock_graph) =
+            DockBuilder::split_node(ui, dock_preview, SplitDirection::Left, 0.60);
+
+          DockBuilder::dock_window(ui, "Preview", dock_preview_left);
+          DockBuilder::dock_window(ui, "Graph", dock_graph);
+
           DockBuilder::dock_window(ui, "Timeline", dock_timeline);
           DockBuilder::dock_window(ui, "Properties", dock_properties);
 
@@ -282,17 +296,111 @@ impl Layout {
         }
 
         ui.window("Graph").build(|| {
-          self.graph.draw(ui, &self.node_editor);
+          use crate::graph::Node;
+
+          let avail = ui.content_region_avail();
+
+          let inspector_height = 220.0;
+          let graph_height = avail[1] - inspector_height - ui.clone_style().item_spacing()[1];
+
+          ui.child_window("##graph")
+            .size([avail[0], graph_height])
+            .border(true)
+            .build(ui, || {
+              if let Some(id) = self.selected_node_id {
+                if ui.button("Play") {
+                  self.graph.export_to_dialog(id, &self.timelines).unwrap();
+                }
+
+                ui.same_line();
+                ui.separator_vertical();
+                ui.same_line();
+              }
+
+              let mut pending_select_id = None;
+              let mut pending_delete_id = None;
+              let mut pending_add_id = None;
+
+              self.graph.draw(
+                ui,
+                &self.node_editor,
+                |id| {
+                  pending_add_id = Some(id);
+                },
+                |id| {
+                  pending_select_id = Some(id);
+                },
+                |id| {
+                  pending_delete_id = Some(id);
+                },
+              );
+
+              if let Some(id) = pending_add_id.take() {
+                let node = self.graph.get_node_by_id(id).unwrap();
+                if matches!(node, Node::Conversation { .. }) {
+                  assert!(self.timelines.insert(id, Timeline::new()).is_none());
+                }
+              }
+
+              if let Some(selection) = pending_select_id.take() {
+                self.selected_node_id = selection;
+                self.selected_timeline_id = selection.and_then(|id| {
+                  let node = self.graph.get_node_by_id(id).unwrap();
+
+                  match node {
+                    Node::Conversation { .. } => Some(id),
+                    _ => None,
+                  }
+                });
+              }
+
+              if let Some(id) = pending_delete_id.take() {
+                self.timelines.remove_entry(&id);
+                self.reset_graph_selection();
+              }
+            });
+
+          // Inspector
+          ui.child_window("##inspector")
+            .size([avail[0], inspector_height])
+            .border(true)
+            .build(ui, || {
+              ui.text("Inspector");
+              ui.separator();
+
+              if let Some(id) = self.selected_node_id {
+                let node = self.graph.get_mut_node_by_id(id).unwrap();
+                let name = match node {
+                  Node::Conversation { name, ..} => name,
+                  Node::Choicer { name, ..} => name
+                };
+                
+                ui.text("Name:");
+                ui.same_line();
+                ui.input_text("##graph_inspector_input", name).build();
+              }
+            });
         });
 
         ui.window("Timeline").build(|| {
+          if self.selected_timeline_id.is_none() {
+            ui.text("Select some Conversation node");
+            return;
+          }
+
+          let timeline = self.selected_timeline_id.unwrap();
+          let timeline = self.timelines.get_mut(&timeline).unwrap();
+
           if ui.button("Play Conversation") {
-            let dialog = self.timeline.export_to_dialog();
+            let dialog = timeline.export_to_dialog();
 
             // Reset all parameters
             ctx.animator.clear_parameters();
-            *ctx.dialog_mgr = core::dialog::DialogManager::new_from_entries(vec![("Initial".into(), dialog)]);
-            *ctx.dialog_player = Some(core::dialog::DialogPlayer::new(ctx.dialog_mgr.build("Initial").unwrap()));
+            *ctx.dialog_mgr =
+              core::dialog::DialogManager::new_from_entries(vec![("Initial".into(), dialog)]);
+            *ctx.dialog_player = Some(core::dialog::DialogPlayer::new(
+              ctx.dialog_mgr.build("Initial").unwrap(),
+            ));
             ctx.dialog_player.as_mut().unwrap().play();
           }
 
@@ -308,9 +416,7 @@ impl Layout {
             &mut self.new_modal_string,
             &mut self.open_modal,
           ) {
-            self
-              .timeline
-              .push_back_container(self.new_modal_string.clone());
+            timeline.push_back_container(self.new_modal_string.clone());
             self.new_modal_string.clear();
           }
 
@@ -321,7 +427,7 @@ impl Layout {
 
           let mut delete_command = None;
 
-          if let Some(selected) = self.timeline.get_selected() {
+          if let Some(selected) = timeline.get_selected() {
             ui.same_line();
             ui.separator_vertical();
             ui.same_line();
@@ -376,9 +482,9 @@ impl Layout {
 
           if let Some(cmd) = delete_command.take() {
             match cmd {
-              DeleteCommand::Container(id) => self.timeline.delete_container(id),
+              DeleteCommand::Container(id) => timeline.delete_container(id),
               DeleteCommand::Block(container_id, block_id) => {
-                self.timeline.delete_block(container_id, block_id)
+                timeline.delete_block(container_id, block_id)
               }
             }
           }
@@ -389,12 +495,19 @@ impl Layout {
             .size([0.0, 0.0])
             .flags(WindowFlags::HORIZONTAL_SCROLLBAR)
             .build(ui, || {
-              self.timeline.draw(ui);
+              timeline.draw(ui);
             });
         });
 
         ui.window("Properties").build(|| {
-          if let Some(selected) = self.timeline.get_selected() {
+          if self.selected_timeline_id.is_none() {
+            return;
+          }
+
+          let timeline = self.selected_timeline_id.unwrap();
+          let timeline = self.timelines.get_mut(&timeline).unwrap();
+
+          if let Some(selected) = timeline.get_selected() {
             match selected {
               Selection::Container(container) => {
                 ui.text("Who?");
@@ -518,6 +631,11 @@ impl Layout {
           }
         });
       });
+  }
+
+  fn reset_graph_selection(&mut self) {
+    self.selected_node_id = None;
+    self.selected_timeline_id = None;
   }
 
   fn draw_float_property(

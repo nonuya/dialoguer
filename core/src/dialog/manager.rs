@@ -34,7 +34,7 @@ impl DialogManager {
         let index = dialogs.len();
 
         dialogs.push(dialog);
-        map.insert(id, index);
+        assert!(map.insert(id, index).is_none(), "Existing Dialog!");
 
         (dialogs, map)
       },
