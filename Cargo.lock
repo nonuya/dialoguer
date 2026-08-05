@@ -478,6 +478,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "dear-node-editor"
+version = "0.15.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1eed59e4b256ad319114534f181d056d0ed2cec91afc9ca812169bb93a41d043"
+dependencies = [
+ "bitflags 2.13.1",
+ "dear-imgui-rs",
+ "dear-node-editor-sys",
+ "thiserror 2.0.19",
+]
+
+[[package]]
+name = "dear-node-editor-sys"
+version = "0.15.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "acd99dad92db9ef49c86d8db35179bab119f085ccf28da61b3aae1617573da8d"
+dependencies = [
+ "cc",
+ "cfg-if",
+ "dear-imgui-build-support",
+ "dear-imgui-sys",
+ "pkg-config",
+]
+
+[[package]]
 name = "defmt"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -555,6 +580,7 @@ dependencies = [
  "dear-imgui-glow",
  "dear-imgui-rs",
  "dear-imgui-winit",
+ "dear-node-editor",
  "env_logger",
  "glam",
  "glow",

@@ -23,7 +23,7 @@ impl TimelineBlock {
     border_color: [f32; 4],
   ) {
     let (name, color) = match self.value {
-      TimelineBlockType::Set{..} => (
+      TimelineBlockType::Set { .. } => (
         "Set",
         [0.20, 0.45, 0.78, 1.0], // Azul
       ),
@@ -62,7 +62,7 @@ impl TimelineBlock {
 }
 
 pub enum TimelineBlockType {
-  Set{
+  Set {
     parameters: Vec<(String, String)>, // EnumName ValueName
     anim: String,
   },
@@ -73,7 +73,10 @@ pub enum TimelineBlockType {
 
 impl TimelineBlockType {
   pub fn empty_set() -> Self {
-    TimelineBlockType::Set { parameters: Vec::new(), anim: String::new() }
+    TimelineBlockType::Set {
+      parameters: Vec::new(),
+      anim: String::new(),
+    }
   }
 }
 
@@ -89,6 +92,33 @@ impl Container {
       id: self.blocks.len(),
       value,
     });
+  }
+
+  pub fn export_to_dialog_node(&self) -> core::dialog::DialogNode {
+    use core::dialog::Event;
+
+    let mut events = Vec::new();
+
+    for b in &self.blocks {
+      match &b.value {
+        TimelineBlockType::Wait(seconds) => events.push(Event::Wait(*seconds)),
+        TimelineBlockType::Text(text) => events.push(Event::Text(text.clone())),
+        TimelineBlockType::Set { parameters, anim } => {
+          events.push(Event::SetAnim(anim.clone()));
+          for p in parameters {
+            events.push(Event::SetParameter(p.0.clone(), p.1.clone()));
+          } 
+        },
+        _ => {
+          unimplemented!()
+        }
+      }
+    }
+
+    core::dialog::DialogNode {
+      label: self.name.clone(),
+      events,
+    }
   }
 }
 
@@ -374,7 +404,7 @@ impl Timeline {
     }
   }
 
-  pub fn get_selected(&mut self) -> Option<Selection> {
+  pub fn get_selected(&mut self) -> Option<Selection<'_>> {
     if let Some((container_id, block_id)) = self.selected_block {
       let container_idx = self.containers.iter().position(|c| c.id == container_id)?;
       let block_idx = self.containers[container_idx]
@@ -382,7 +412,10 @@ impl Timeline {
         .iter()
         .position(|b| b.id == block_id)?;
 
-      return Some(Selection::Block(container_id, &mut self.containers[container_idx].blocks[block_idx]));
+      return Some(Selection::Block(
+        container_id,
+        &mut self.containers[container_idx].blocks[block_idx],
+      ));
     } else if let Some(container_id) = self.selected_container_id {
       let container_idx = self.containers.iter().position(|c| c.id == container_id)?;
       return Some(Selection::Container(&mut self.containers[container_idx]));
@@ -413,5 +446,15 @@ impl Timeline {
         container.blocks.remove(idx);
       }
     }
+  }
+
+  pub fn export_to_dialog(&self) -> core::dialog::Dialog {
+    let dialogs = self
+      .containers
+      .iter()
+      .map(Container::export_to_dialog_node)
+      .collect();
+
+    core::dialog::Dialog::Conversation(dialogs)
   }
 }

@@ -4,7 +4,10 @@ use dear_imgui_rs::*;
 use std::{fs::File, path::PathBuf, rc::Rc};
 use winit::event::KeyEvent;
 
-use crate::{layout::{EditorContext, Layout}, timeline::Timeline};
+use crate::{
+  layout::{EditorContext, Layout},
+  timeline::Timeline,
+};
 
 pub struct App {
   gl: Rc<glow::Context>,
@@ -14,11 +17,14 @@ pub struct App {
   mvp: glam::Mat4,
   model_renderer: core::live2d::Renderer,
   animator: core::live2d::animator::Animator,
+  dialog_mgr: core::dialog::DialogManager,
+  dialog_player: Option<core::dialog::DialogPlayer>,
+  motion_mgr: core::live2d::animator::MotionManager,
   layout: Layout,
 }
 
 impl App {
-  pub fn new(model_path: PathBuf, renderer: &mut GlowRenderer) -> anyhow::Result<Self> {
+  pub fn new(model_path: PathBuf, renderer: &mut GlowRenderer, imgui_context: &dear_imgui_rs::Context) -> anyhow::Result<Self> {
     let gl = renderer.gl_context().unwrap().clone();
 
     let model_name = model_path
@@ -53,6 +59,10 @@ impl App {
       .texture_map_mut()
       .set(texture_id, model_renderer.tex());
 
+    let motion_mgr =
+      core::live2d::animator::MotionManager::new(&model_path, &model3)
+      .context("Failed to read motions")?;
+
     Ok(Self {
       gl,
       texture_id,
@@ -60,12 +70,24 @@ impl App {
       enummap,
       mvp: glam::Mat4::from_scale(glam::vec3(2.0, 2.0, 1.0)),
       model_renderer,
+      motion_mgr,
       animator: core::live2d::animator::Animator::new(),
-      layout: Layout::new(),
+      layout: Layout::new(imgui_context),
+      dialog_mgr: core::dialog::DialogManager::new_empty(),
+      dialog_player: None,
     })
   }
 
   pub fn update(&mut self, deltatime: f32) {
+    if let Some(player) = &mut self.dialog_player {
+      player.update(
+        &mut self.animator,
+        &self.dialog_mgr,
+        &self.enummap,
+        &self.motion_mgr,
+      );
+    }
+
     self.animator.update(deltatime, &mut self.model);
   }
 
@@ -76,6 +98,8 @@ impl App {
       model: &mut self.model,
       animator: &mut self.animator,
       enummap: &mut self.enummap,
+      dialog_mgr: &mut self.dialog_mgr,
+      dialog_player: &mut self.dialog_player,
     };
     self.layout.draw(ui, ctx);
 
@@ -110,5 +134,6 @@ impl App {
 
   pub fn resize(&mut self, width: u32, height: u32) {}
 
-  pub fn keyboard(&mut self, event: KeyEvent) {}
+  pub fn keyboard(&mut self, event: KeyEvent) {
+  }
 }

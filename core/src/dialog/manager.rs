@@ -5,7 +5,7 @@ use crate::{
   live2d::animator::{Animator, EnumMap, MotionManager, ParamValue, Value},
 };
 use anyhow::Context;
-use chumsky::Parser;
+use chumsky::{Parser, container::Seq};
 use log::{debug, warn};
 
 // Esto indicará si qué cosa será nuestro primer dialogo cuando presionemos "Iniciar Dialogo"
@@ -20,41 +20,39 @@ pub struct DialogManager {
 }
 
 impl DialogManager {
-  pub fn new(tokens: Vec<Token>) -> anyhow::Result<Self> {
-    let (dialogs, map) = dialog_parser()
+  pub fn new_empty() -> Self {
+    Self {
+      dialogs: Vec::new(),
+      map: HashMap::new(),
+    }
+  }
+
+  pub fn new_from_entries(entries: Vec<(String, Dialog)>) -> Self {
+    let (dialogs, map) = entries.into_iter().fold(
+      (Vec::new(), HashMap::new()),
+      |(mut dialogs, mut map), (id, dialog)| {
+        let index = dialogs.len();
+
+        dialogs.push(dialog);
+        map.insert(id, index);
+
+        (dialogs, map)
+      },
+    );
+
+    Self {
+      dialogs,
+      map,
+    }
+  }
+
+  pub fn new_from_tokens(tokens: Vec<Token>) -> anyhow::Result<Self> {
+    let entries = dialog_parser()
       .parse(&tokens)
       .into_result()
-      .map_err(|err| anyhow::anyhow!("Dialog Block Parser {:#?}", err))?
-      .into_iter()
-      .fold(
-        (Vec::new(), HashMap::new()),
-        |(mut dialogs, mut map), (id, dialog)| {
-          let index = dialogs.len();
+      .map_err(|err| anyhow::anyhow!("Dialog Block Parser {:#?}", err))?;
 
-          dialogs.push(dialog);
-          map.insert(id, index);
-
-          (dialogs, map)
-        },
-      );
-
-    anyhow::ensure!(map.contains_key("Initial.1"), "Dialog File must be have [Initial.1]");
-    anyhow::ensure!(map.contains_key("Idle"), "Dialog File must be have [Idle]");
-    anyhow::ensure!(map.contains_key("Phase01"), "Dialog File must be have [[Phase01]]");
-
-    Ok(Self { dialogs, map })
-  }
-
-  pub fn build_phase01(&self) -> DialogEntryPoint {
-    self.build("Phase01").unwrap()
-  }
-
-  pub fn build_idle(&self) -> DialogEntryPoint {
-    self.build("Idle").unwrap()
-  }
-
-  pub fn build_initial(&self) -> DialogEntryPoint {
-    self.build("Initial.1").unwrap()
+    Ok(Self::new_from_entries(entries))
   }
 
   // Construyes un iterator a partir de un bloque
@@ -103,14 +101,14 @@ impl DialogManager {
 }
 
 /*
- * Dialogo es este bloque
- [Header]
-  Player:   <- Esta es una conversación
-    ...
-  Saya-Chan:
-    ...
- ===
- */
+* Dialogo es este bloque
+[Header]
+ Player:   <- Esta es una conversación
+   ...
+ Saya-Chan:
+   ...
+===
+*/
 #[derive(Debug, Clone)]
 pub struct DialogIter {
   index: usize,                      // Dialogo
@@ -178,16 +176,16 @@ impl DialogPlayer {
     motion_mgr: &MotionManager,
   ) {
     match &self.state {
-       PlayerState::Running => self.consume_dialog(animator, dialog_mgr, enum_map, motion_mgr),
-       PlayerState::WaitingChoice(choices) => {
-         if !self.shown {
-           self.shown = true;
-           for c in choices.iter().enumerate() {
-            println!("{}) {}", c.0+1, c.1.0);
-           }
-         }
-       },
-       _ => {}
+      PlayerState::Running => self.consume_dialog(animator, dialog_mgr, enum_map, motion_mgr),
+      PlayerState::WaitingChoice(choices) => {
+        if !self.shown {
+          self.shown = true;
+          for c in choices.iter().enumerate() {
+            println!("{}) {}", c.0 + 1, c.1.0);
+          }
+        }
+      }
+      _ => {}
     }
   }
 
@@ -199,7 +197,7 @@ impl DialogPlayer {
         self.iter = Some(choice.1.clone());
         self.state = PlayerState::Running;
       }
-    } 
+    }
   }
 
   fn consume_dialog(
@@ -224,8 +222,8 @@ impl DialogPlayer {
 
     let dialog = &dialog_mgr.dialogs[iter.index];
     let nodes = match dialog {
-        Dialog::Conversation(nodes) => nodes,
-        Dialog::Choicer(nodes) => nodes
+      Dialog::Conversation(nodes) => nodes,
+      Dialog::Choicer(nodes) => nodes,
     };
 
     let conversation = &nodes[conversation_iter.idx];
@@ -238,7 +236,7 @@ impl DialogPlayer {
         // Nosotros queremos esperar el input del usuario.
         break;
       };
-    
+
       match &conversation.events[*idx] {
         Event::SetMainChoicer(id) => {
           if let Some(initial_dialog) = dialog_mgr.build(id) {
@@ -254,30 +252,27 @@ impl DialogPlayer {
         }
         Event::SetParameter(enum_type, enum_value) => {
           match enum_map.enums.get(enum_type) {
-            Some(myenum) => {
-              match myenum.values.get(enum_value) {
-                Some(params) => {
-
-                  for p in params {
-                    animator.set_parameter(&p.name, get_parameter_value(p, enum_map, animator));
-                  }
+            Some(myenum) => match myenum.values.get(enum_value) {
+              Some(params) => {
+                for p in params {
+                  animator.set_parameter(&p.name, get_parameter_value(p, enum_map, animator));
                 }
-                None => warn!(
-                  "EnumValue '{}' doesn't exists in '{}'",
-                  enum_value, enum_type
-                ),
               }
-            }
+              None => warn!(
+                "EnumValue '{}' doesn't exists in '{}'",
+                enum_value, enum_type
+              ),
+            },
             None => warn!("EnumType '{}' doesn't exists!", enum_type),
           }
           conversation_iter.events.pop_front();
           continue;
-        },
+        }
         Event::Jump(id) => match dialog_mgr.build(id) {
           Some(entry_point) => match entry_point {
             DialogEntryPoint::Choicer(choices) => {
               warn!("Jumping to Choicer '{}'", id);
-              self.state = PlayerState::WaitingChoice(choices.clone());   
+              self.state = PlayerState::WaitingChoice(choices.clone());
               break;
             }
             DialogEntryPoint::Conversation(iter) => {
@@ -332,34 +327,31 @@ impl DialogPlayer {
 }
 
 fn get_parameter_value(p: &ParamValue, enum_map: &EnumMap, animator: &Animator) -> Value {
-    let inc = p
-        .modification
-        .as_ref()
-        .map(|m| {
-            let res = enum_map
-                .enums
-                .get(&m.lhs)
-                .and_then(|e| e.values.get(&m.rhs))
-                .is_some_and(|values| {
-                    values.iter().all(|v| {
-                        animator.is_parameter_equal_to_value(&v.name, &get_parameter_value(v, enum_map, animator))
-                    })
-                });
+  let inc = p
+    .modification
+    .as_ref()
+    .map(|m| {
+      let res = enum_map
+        .enums
+        .get(&m.lhs)
+        .and_then(|e| e.values.get(&m.rhs))
+        .is_some_and(|values| {
+          values.iter().all(|v| {
+            animator
+              .is_parameter_equal_to_value(&v.name, &get_parameter_value(v, enum_map, animator))
+          })
+        });
 
-            if res {
-                m.then
-            } else {
-                0.0
-            }
-        })
-        .unwrap_or(0.0);
+      if res { m.then } else { 0.0 }
+    })
+    .unwrap_or(0.0);
 
-    match p.value {
-        Value::Fixed(v) => Value::Fixed(v + inc),
-        Value::Smooth { target, step, .. } => Value::Smooth {
-            actual: 0.0,
-            target: target + inc,
-            step,
-        },
-    }
+  match p.value {
+    Value::Fixed(v) => Value::Fixed(v + inc),
+    Value::Smooth { target, step, .. } => Value::Smooth {
+      actual: 0.0,
+      target: target + inc,
+      step,
+    },
+  }
 }

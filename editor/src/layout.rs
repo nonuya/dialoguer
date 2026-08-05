@@ -1,63 +1,41 @@
 use dear_imgui_rs::*;
+use dear_node_editor::NodeEditorUiExt;
 
-use crate::timeline::{Selection, Timeline, TimelineBlockType};
+use crate::{graph::Graph, timeline::{Selection, Timeline, TimelineBlockType}};
 
 pub struct EditorContext<'a> {
   pub model: &'a mut core::live2d::Model,
   pub animator: &'a mut core::live2d::animator::Animator,
   pub enummap: &'a mut core::live2d::animator::EnumMap,
+  pub dialog_mgr: &'a mut core::dialog::DialogManager,
+  pub dialog_player: &'a mut Option<core::dialog::DialogPlayer>,
 }
 
 pub struct Layout {
   layout_initialized: bool,
   new_modal_string: String,
   open_modal: bool,
-  timeline: Timeline,
+  node_editor: dear_node_editor::EditorContext,
+  graph: Graph,
+  timeline: Timeline, // Unique
   is_main_layout: bool,
   selected_enum: Option<(String, String)>,
   enumlog: Vec<(String, String)>,
 }
 
 impl Layout {
-  pub fn new() -> Self {
+  pub fn new(imgui_context: &dear_imgui_rs::Context) -> Self {
     Self {
       layout_initialized: false,
+      node_editor: dear_node_editor::EditorContext::create(imgui_context),
       selected_enum: None,
       enumlog: Vec::new(),
       is_main_layout: true,
+      graph: Graph::new(),
       open_modal: false,
       timeline: Timeline::new(),
       new_modal_string: String::new(),
     }
-  }
-
-  fn modal(ui: &Ui, id: &str, output: &mut String, open_modal: &mut bool) -> bool {
-    if let Some(_) = ui.begin_modal_popup(id) {
-      if !*open_modal {
-        ui.set_keyboard_focus_here();
-        *open_modal = true;
-      }
-      ui.input_text("##modal_name", output).build();
-
-      if ui.button("Create") {
-        if !output.is_empty() {
-          ui.close_current_popup();
-          *open_modal = false;
-          return true;
-        }
-      }
-
-      ui.same_line();
-
-      if ui.button("Cancel") {
-        output.clear();
-        ui.close_current_popup();
-        *open_modal = false;
-        return false;
-      }
-    }
-
-    return false;
   }
 
   pub fn draw(&mut self, ui: &mut Ui, ctx: EditorContext) {
@@ -296,14 +274,27 @@ impl Layout {
             DockBuilder::split_node(ui, dock_bottom, SplitDirection::Left, 0.70);
 
           DockBuilder::dock_window(ui, "Preview", dock_preview);
+          DockBuilder::dock_window(ui, "Graph", dock_preview);
           DockBuilder::dock_window(ui, "Timeline", dock_timeline);
           DockBuilder::dock_window(ui, "Properties", dock_properties);
 
           DockBuilder::finish(ui, dockspace_id);
         }
 
+        ui.window("Graph").build(|| {
+          self.graph.draw(ui, &self.node_editor);
+        });
+
         ui.window("Timeline").build(|| {
-          if ui.button("Play Conversation") {}
+          if ui.button("Play Conversation") {
+            let dialog = self.timeline.export_to_dialog();
+
+            // Reset all parameters
+            ctx.animator.clear_parameters();
+            *ctx.dialog_mgr = core::dialog::DialogManager::new_from_entries(vec![("Initial".into(), dialog)]);
+            *ctx.dialog_player = Some(core::dialog::DialogPlayer::new(ctx.dialog_mgr.build("Initial").unwrap()));
+            ctx.dialog_player.as_mut().unwrap().play();
+          }
 
           ui.same_line();
 
@@ -342,6 +333,8 @@ impl Layout {
               }
               Selection::Container(container) => {
                 if ui.button("Play Container") {
+                  let dialog_node = container.export_to_dialog_node();
+                  println!("Dialog Node: {:#?}", dialog_node);
                 }
 
                 ui.same_line();
@@ -409,7 +402,7 @@ impl Layout {
                 ui.input_text("##container_name", &mut container.name)
                   .build();
               }
-              Selection::Block(container_id, block) => match &mut block.value {
+              Selection::Block(_container_id, block) => match &mut block.value {
                 TimelineBlockType::Text(text) => {
                   ui.text("Text:");
                   ui.same_line();
@@ -433,7 +426,7 @@ impl Layout {
                   ui.separator();
 
                   for (idx, entry) in parameters.iter_mut().enumerate() {
-                    let _ = ui.push_id(idx as i32);
+                    let _id = ui.push_id(idx as i32);
 
                     // --- Texto (nombre de la entrada) ---
                     ui.text(&entry.0);
@@ -476,7 +469,9 @@ impl Layout {
                   }
 
                   if let Some(_) = ui.begin_popup("##add_entry_popup") {
-                    for prop_name in ctx.enummap.enums.keys() {
+                    let mut params: Vec<_> = ctx.enummap.enums.keys().collect();
+                    params.sort_unstable_by_key(|&p| p);
+                    for prop_name in params {
                       if ui.selectable_config(prop_name).size([0.0, 0.0]).build() {
                         parameters.push((prop_name.clone(), String::new()));
                         ui.close_current_popup();
@@ -551,5 +546,34 @@ impl Layout {
     ui.text(format!("{:.2}", value));
 
     changed
+  }
+
+  fn modal(ui: &Ui, id: &str, output: &mut String, open_modal: &mut bool) -> bool {
+    if let Some(_) = ui.begin_modal_popup(id) {
+      if !*open_modal {
+        ui.set_keyboard_focus_here();
+        *open_modal = true;
+      }
+      ui.input_text("##modal_name", output).build();
+
+      if ui.button("Create") {
+        if !output.is_empty() {
+          ui.close_current_popup();
+          *open_modal = false;
+          return true;
+        }
+      }
+
+      ui.same_line();
+
+      if ui.button("Cancel") {
+        output.clear();
+        ui.close_current_popup();
+        *open_modal = false;
+        return false;
+      }
+    }
+
+    return false;
   }
 }

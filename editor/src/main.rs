@@ -1,4 +1,5 @@
 mod app;
+mod graph;
 mod layout;
 mod timeline;
 
@@ -140,7 +141,7 @@ impl ApplicationHandler for MainWindow {
       renderer.set_framebuffer_srgb_enabled(false);
       renderer.new_frame().unwrap();
 
-      match App::new(PathBuf::from("assets/models/iav_013_2"), &mut renderer) {
+      match App::new(PathBuf::from("assets/models/iav_013_2"), &mut renderer, &context) {
         Ok(app) => self.app = Some(app),
         Err(err) => {
           error!("[Application] {:#}", err);
