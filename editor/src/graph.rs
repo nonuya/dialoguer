@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use anyhow::Context;
 use dear_imgui_rs::*;
 use dear_node_editor::*;
+use log::warn;
 
 pub struct Graph {
   nodes: Vec<Node>,
@@ -33,6 +34,13 @@ impl Node {
     match self {
       Node::Conversation { id, .. } => *id,
       Node::Choicer { id, .. } => *id,
+    }
+  }
+
+  pub fn name(&self) -> &String {
+    match self {
+      Node::Conversation { name, .. } => name,
+      Node::Choicer { name, .. } => name,
     }
   }
 }
@@ -74,13 +82,42 @@ impl IdGen {
 }
 
 impl Graph {
-  pub fn new() -> Self {
-    Self {
-      selected_node_id: None,
-      nodes: Vec::new(),
-      links: Vec::new(),
-      id_gen: IdGen::new(),
+  pub fn new(
+    dialog_mgr: &core::dialog::DialogManager,
+  ) -> (HashMap<NodeId, crate::timeline::Timeline>, Self) {
+    use core::dialog::Dialog;
+
+    let mut timelines = HashMap::new();
+    let mut nodes = Vec::new();
+    let mut links = Vec::new();
+    let mut id_gen = IdGen::new();
+
+    let dialog = dialog_mgr.get_dialog_by_id("Phase01.5").unwrap();
+    let node = Node::Conversation {
+      id: id_gen.next_node(),
+      name: "Phase01.5".into(),
+      input: id_gen.next_pin(),
+      output: id_gen.next_pin(),
+    };
+    match dialog {
+      Dialog::Conversation(dialog_nodes) => {
+        timelines.insert(node.id(), crate::timeline::Timeline::new(dialog_nodes));
+        nodes.push(node);
+      }
+      Dialog::Choicer(dialog_nodes) => {
+        unimplemented!()
+      }
     }
+
+    (
+      timelines,
+      Self {
+        selected_node_id: None,
+        nodes,
+        links,
+        id_gen,
+      },
+    )
   }
 
   fn add_conversation(&mut self, name: String) -> NodeId {
@@ -190,7 +227,12 @@ impl Graph {
 
     for node in &mut self.nodes {
       match node {
-        Node::Conversation { id, name, input, output } => {
+        Node::Conversation {
+          id,
+          name,
+          input,
+          output,
+        } => {
           editor.node(*id, |node| {
             node.pin(*input, PinKind::Input, |_pin| {
               ui.text(" * ");
@@ -291,16 +333,7 @@ impl Graph {
 
     // --- Aplicar el "+" pendiente después de terminar el frame del editor ---
     if let Some(node_id) = pending_new_option {
-      let next_idx = self
-        .nodes
-        .iter()
-        .find(|n| n.id() == node_id)
-        .map(|n| match n {
-          Node::Choicer { options, .. } => options.len() + 1,
-          _ => 0,
-        })
-        .unwrap_or(0);
-      self.add_choicer_option(node_id, format!("Choice {}", next_idx));
+      self.add_choicer_option(node_id, "Text".into());
     }
 
     if let Some(index) = pending_deleting.take() {
@@ -370,30 +403,72 @@ impl Graph {
     &self,
     id: NodeId,
     timelines: &HashMap<NodeId, crate::timeline::Timeline>,
-  ) -> anyhow::Result<()> {
+  ) -> anyhow::Result<Vec<(String, core::dialog::Dialog)>> {
+    use core::dialog::{Dialog, DialogNode, Event};
+    use std::collections::VecDeque;
+
+    let mut queue = VecDeque::new();
     let node = self
       .get_node_by_id(id)
       .context("Failed to get Node by Id")?;
+    let mut dialogs: Vec<(String, Dialog)> = Vec::new();
+    queue.push_back(node);
 
-    match node {
-      Node::Conversation { id, name, input, output } => {
-        let timeline = timelines.get(id).context("Failed to get Timeline")?;
-        let dialog = timeline.export_to_dialog();
-        let next = self.follow(*output);
-        println!("Next: {:#?}", next);
+    while let Some(node) = queue.pop_front() {
+      match node {
+        Node::Conversation {
+          id,
+          name,
+          input,
+          output,
+        } => {
+          let timeline = timelines.get(id).context("Failed to get Timeline")?;
+          let mut dialog = timeline.export_to_dialog();
+          if let Some(next) = self.follow(*output) {
+            queue.push_back(next);
+            match &mut dialog {
+              Dialog::Conversation(nodes) => {
+                nodes.push(DialogNode {
+                  label: "Player".into(),
+                  events: vec![Event::Jump(next.name().clone())],
+                });
+              }
+              Dialog::Choicer(_) => {
+                unreachable!();
+              }
+            }
+          }
 
-        println!("{:#?}", dialog);
+          dialogs.push((name.clone(), dialog));
+        }
+        Node::Choicer {
+          id,
+          name,
+          options,
+          input,
+          outputs,
+        } => {
+          let mut valid_choices: Vec<DialogNode> = Vec::new();
+          for (option, output) in options.iter().zip(outputs) {
+            match self.follow(*output) {
+              Some(next) => {
+                valid_choices.push(DialogNode {
+                  label: option.clone(),
+                  events: vec![Event::Jump(next.name().clone())],
+                });
+                queue.push_back(next);
+              }
+              None => {
+                warn!("Skipping '{}' because it doesnt have an output node.", name);
+              }
+            }
+          }
+          dialogs.push((name.clone(), Dialog::Choicer(valid_choices)));
+        }
       }
-      Node::Choicer {
-        id,
-        name,
-        options,
-        input,
-        outputs,
-      } => {}
     }
 
-    Ok(())
+    Ok(dialogs)
   }
 
   fn follow(&self, output: PinId) -> Option<&Node> {

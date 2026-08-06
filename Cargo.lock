@@ -575,6 +575,7 @@ name = "editor"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chumsky",
  "core",
  "cubism",
  "dear-imgui-glow",

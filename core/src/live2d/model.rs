@@ -109,8 +109,9 @@ impl Model {
     self.cubism.save_parameters();
   }
 
-  pub fn load_parameters(&mut self) {
+  pub fn load_saved_parameters(&mut self) {
     self.cubism.load_parameters();
+    self.update_parameters();
   }
 
   pub fn update_parameters(&mut self) {

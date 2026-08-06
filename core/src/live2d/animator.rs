@@ -1,9 +1,13 @@
-use std::{collections::HashMap, fs, path::{Path, PathBuf}};
+use std::{
+  collections::HashMap,
+  fs,
+  path::{Path, PathBuf},
+};
 
 use crate::live2d::Model;
 use anyhow::Context;
 use cubism::motion::Motion;
-use log::warn;
+use log::{debug, warn};
 use serde::{Deserialize, Serialize};
 
 pub struct Animator {
@@ -28,14 +32,14 @@ pub struct ParamValue {
   pub value: Value,
 
   #[serde(default)]
-  pub modification: Option<Modification>
+  pub modification: Option<Modification>,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct Modification {
   pub lhs: String,
   pub rhs: String,
-  pub then: f32
+  pub then: f32,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
@@ -46,7 +50,8 @@ pub enum Value {
     actual: f32,
 
     target: f32,
-    step: f32 },
+    step: f32,
+  },
 }
 
 fn default_actual() -> f32 {
@@ -55,7 +60,11 @@ fn default_actual() -> f32 {
 
 impl Value {
   pub fn smooth(target: f32, step: f32) -> Self {
-    Self::Smooth { actual: 0.0, target, step }
+    Self::Smooth {
+      actual: 0.0,
+      target,
+      step,
+    }
   }
 }
 
@@ -75,19 +84,18 @@ impl Animator {
   }
 
   pub fn is_parameter_equal_to_value(&self, id: &String, b: &Value) -> bool {
-    self.map.get(id)
-      .is_some_and(|a| {
-        let lhs = match a {
-          Value::Fixed(f) => f,
-          Value::Smooth { target, .. } => target
-        };
-        let rhs = match b {
-          Value::Fixed(f) => f,
-          Value::Smooth { target, .. } => target
-        };
+    self.map.get(id).is_some_and(|a| {
+      let lhs = match a {
+        Value::Fixed(f) => f,
+        Value::Smooth { target, .. } => target,
+      };
+      let rhs = match b {
+        Value::Fixed(f) => f,
+        Value::Smooth { target, .. } => target,
+      };
 
-        lhs == rhs
-      })
+      lhs == rhs
+    })
   }
 
   pub fn clear_parameters(&mut self) {
@@ -99,23 +107,29 @@ impl Animator {
     if let Some(old) = self.map.get(id) {
       match (old, &mut value) {
         (
-          Value::Smooth { actual: old_actual, .. },
-          Value::Smooth { actual: new_actual, .. }
+          Value::Smooth {
+            actual: old_actual, ..
+          },
+          Value::Smooth {
+            actual: new_actual, ..
+          },
         ) => *new_actual = *old_actual,
         (
           Value::Fixed(old_actual),
-          Value::Smooth { actual: new_actual, ..}
+          Value::Smooth {
+            actual: new_actual, ..
+          },
         ) => *new_actual = *old_actual,
         _ => {}
       }
     }
 
     match value {
-      Value::Smooth { step, ..} => {
+      Value::Smooth { step, .. } => {
         if step == 0.0 {
           warn!("Step of Parameter '{}' is zero!", id)
         }
-      },
+      }
       _ => {}
     }
 
@@ -184,13 +198,18 @@ impl Animator {
     // Otros ajustes de parametros
     model.update_parameters();
   }
+
+  pub fn motion_names(&self) -> Vec<&String> {
+    let mut names: Vec<_> = self.map.keys().collect(); 
+    names.sort();
+    names
+  }
 }
 
 pub struct MotionManager(HashMap<String, Motion>);
 
 impl MotionManager {
   pub fn new(path: &PathBuf, model3: &cubism::json::model::Model3) -> anyhow::Result<Self> {
-    /*
     let motions = model3
       .file_references
       .motions
@@ -207,8 +226,8 @@ impl MotionManager {
 
         Ok((name.to_string(), motion))
       })
-    .collect::<anyhow::Result<HashMap<_,_>>>()?;*/
-    let motions = HashMap::new();
+    .collect::<anyhow::Result<HashMap<_,_>>>()?;
+    // let motions = HashMap::new();
 
     Ok(Self(motions))
   }
@@ -220,12 +239,9 @@ impl MotionManager {
 
 pub fn load_enum_map(filepath: &Path) -> anyhow::Result<EnumMap> {
   let src =
-    fs::read_to_string(filepath)
-      .context(format!("Failed to load {}", filepath.display()))?;
+    fs::read_to_string(filepath).context(format!("Failed to load {}", filepath.display()))?;
 
-  let myenums: EnumMap =
-    ron::from_str(&src)
-    .context("Failed to parse DialogMap")?;
+  let myenums: EnumMap = ron::from_str(&src).context("Failed to parse DialogMap")?;
 
   Ok(myenums)
 }

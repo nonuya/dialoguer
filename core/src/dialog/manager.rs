@@ -5,7 +5,7 @@ use crate::{
   live2d::animator::{Animator, EnumMap, MotionManager, ParamValue, Value},
 };
 use anyhow::Context;
-use chumsky::{Parser, container::Seq};
+use chumsky::Parser;
 use log::{debug, warn};
 
 // Esto indicará si qué cosa será nuestro primer dialogo cuando presionemos "Iniciar Dialogo"
@@ -20,13 +20,6 @@ pub struct DialogManager {
 }
 
 impl DialogManager {
-  pub fn new_empty() -> Self {
-    Self {
-      dialogs: Vec::new(),
-      map: HashMap::new(),
-    }
-  }
-
   pub fn new_from_entries(entries: Vec<(String, Dialog)>) -> Self {
     let (dialogs, map) = entries.into_iter().fold(
       (Vec::new(), HashMap::new()),
@@ -40,10 +33,7 @@ impl DialogManager {
       },
     );
 
-    Self {
-      dialogs,
-      map,
-    }
+    Self { dialogs, map }
   }
 
   pub fn new_from_tokens(tokens: Vec<Token>) -> anyhow::Result<Self> {
@@ -53,6 +43,14 @@ impl DialogManager {
       .map_err(|err| anyhow::anyhow!("Dialog Block Parser {:#?}", err))?;
 
     Ok(Self::new_from_entries(entries))
+  }
+
+  pub fn get_dialogs(&self) -> &Vec<Dialog> {
+    &self.dialogs
+  }
+
+  pub fn get_dialog_by_id(&self, id: &str) -> Option<&Dialog> {
+    self.map.get(id).and_then(|idx| Some(&self.dialogs[*idx]))
   }
 
   // Construyes un iterator a partir de un bloque
@@ -132,6 +130,7 @@ enum PlayerState {
 pub struct DialogPlayer {
   initial_dialog: DialogEntryPoint,
   state: PlayerState,
+  total: usize,
   iter: Option<DialogIter>,
   shown: bool,
 }
@@ -140,18 +139,125 @@ impl DialogPlayer {
   pub fn new(initial_dialog: DialogEntryPoint) -> Self {
     Self {
       initial_dialog,
+      total: 0,
       iter: None,
       state: PlayerState::Running,
       shown: false,
     }
   }
 
+  pub fn current(&self) -> Option<usize> {
+    if matches!(self.state, PlayerState::Finished) {
+      return None;
+    }
+
+    let v = self
+      .iter
+      .as_ref()
+      .and_then(|iter| Some(iter.queue.len()))
+      .unwrap_or(0);
+
+    Some(self.total - v)
+  }
+
+  pub fn is_playing(&self) -> bool {
+    !matches!(self.state, PlayerState::Finished)
+  }
+
+  pub fn skip(
+    &mut self,
+    n: usize,
+    animator: &mut Animator,
+    dialog_mgr: &DialogManager,
+    enum_map: &EnumMap,
+    motion_mgr: &MotionManager,
+  ) {
+    for _ in 0..n {
+      self.force_next(animator, dialog_mgr, enum_map, motion_mgr);
+    }
+  }
+
+  pub fn force_next(
+    &mut self,
+    animator: &mut Animator,
+    dialog_mgr: &DialogManager,
+    enum_map: &EnumMap,
+    motion_mgr: &MotionManager,
+  ) {
+    let Some(iter) = self.iter.as_mut() else {
+      return;
+    };
+
+    // Antes de avanzar al siguiente nodo, consumimos los eventos
+    // restantes del nodo actual aplicando SetParameter/SetMainChoicer/RemoveParamater.
+    if let Some(conversation_iter) = iter.queue.front_mut() {
+      let dialog = &dialog_mgr.dialogs[iter.index];
+      let nodes = match dialog {
+        Dialog::Conversation(nodes) => nodes,
+        Dialog::Choicer(nodes) => nodes,
+      };
+      let conversation = &nodes[conversation_iter.idx];
+
+      while let Some(&idx) = conversation_iter.events.front() {
+        match &conversation.events[idx] {
+          Event::SetMainChoicer(id) => {
+            if let Some(initial_dialog) = dialog_mgr.build(id) {
+              self.initial_dialog = initial_dialog;
+            }
+          }
+          Event::SetParameter(enum_type, enum_value) => match enum_map.enums.get(enum_type) {
+            Some(myenum) => match myenum.values.get(enum_value) {
+              Some(params) => {
+                for p in params {
+                  animator.set_parameter(&p.name, get_parameter_value(p, enum_map, animator));
+                }
+              }
+              None => warn!(
+                "EnumValue '{}' doesn't exists in '{}'",
+                enum_value, enum_type
+              ),
+            },
+            None => warn!("EnumType '{}' doesn't exists!", enum_type),
+          },
+          Event::RemoveParamater(enum_type) => match enum_map.enums.get(enum_type) {
+            Some(myenum) => match myenum.values.values().next() {
+              Some(params) => {
+                for p in params {
+                  warn!("Removing '{}'", &p.name);
+                  animator.remove_parameter(&p.name);
+                }
+              }
+              None => warn!("EnumType '{}' is empty", enum_type),
+            },
+            None => warn!("EnumType '{}' doesn't exists!", enum_type),
+          },
+          Event::SetAnim(name) => match motion_mgr.get(name) {
+            Some(motion) => animator.play_motion(motion.clone(), true),
+            None => warn!("Animation '{}' not found", name),
+          },
+          _ => {}
+        }
+
+        conversation_iter.events.pop_front();
+      }
+    }
+
+    if iter.queue.pop_front().is_none() {
+      self.state = PlayerState::Finished;
+      self.iter = None;
+    } else {
+      self.state = PlayerState::Running;
+    }
+  }
   pub fn play(&mut self) {
     match &self.initial_dialog {
       DialogEntryPoint::Choicer(choices) => {
         self.state = PlayerState::WaitingChoice(choices.clone());
       }
-      DialogEntryPoint::Conversation(iter) => self.iter = Some(iter.clone()),
+      DialogEntryPoint::Conversation(iter) => {
+        self.iter = Some(iter.clone());
+        self.total = iter.queue.len();
+      }
     }
   }
 

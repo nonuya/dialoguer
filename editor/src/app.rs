@@ -1,13 +1,14 @@
 use anyhow::Context;
+use chumsky::Parser;
 use dear_imgui_glow::GlowRenderer;
 use dear_imgui_rs::*;
-use std::{fs::File, path::PathBuf, rc::Rc};
-use winit::event::KeyEvent;
-
-use crate::{
-  layout::{EditorContext, Layout},
-  timeline::Timeline,
+use std::{fs::{self, File}, path::PathBuf, rc::Rc};
+use winit::{
+  event::KeyEvent,
+  keyboard::{KeyCode, PhysicalKey},
 };
+
+use crate::layout::{EditorContext, Layout};
 
 pub struct App {
   gl: Rc<glow::Context>,
@@ -24,7 +25,11 @@ pub struct App {
 }
 
 impl App {
-  pub fn new(model_path: PathBuf, renderer: &mut GlowRenderer, imgui_context: &dear_imgui_rs::Context) -> anyhow::Result<Self> {
+  pub fn new(
+    model_path: PathBuf,
+    renderer: &mut GlowRenderer,
+    imgui_context: &dear_imgui_rs::Context,
+  ) -> anyhow::Result<Self> {
     let gl = renderer.gl_context().unwrap().clone();
 
     let model_name = model_path
@@ -59,9 +64,22 @@ impl App {
       .texture_map_mut()
       .set(texture_id, model_renderer.tex());
 
-    let motion_mgr =
-      core::live2d::animator::MotionManager::new(&model_path, &model3)
+    let motion_mgr = core::live2d::animator::MotionManager::new(&model_path, &model3)
       .context("Failed to read motions")?;
+
+    let mut dialog_path = model_path.join(model_name);
+    dialog_path.set_extension("dialog");
+
+    let dialog_src = fs::read_to_string(&dialog_path)
+      .context(format!("Failed to read {}", dialog_path.display()))?;
+
+    let dialog_tokens = core::dialog::dialog_block_lexer()
+      .parse(&dialog_src)
+      .into_result()
+      .map_err(|err| anyhow::anyhow!("Dialog Block Lexer {:#?}", err))?;
+
+    let dialog_mgr = core::dialog::DialogManager::new_from_tokens(dialog_tokens)
+      .context("Failed to create DialogManager")?;
 
     Ok(Self {
       gl,
@@ -72,8 +90,8 @@ impl App {
       model_renderer,
       motion_mgr,
       animator: core::live2d::animator::Animator::new(),
-      layout: Layout::new(imgui_context),
-      dialog_mgr: core::dialog::DialogManager::new_empty(),
+      layout: Layout::new(imgui_context, &dialog_mgr),
+      dialog_mgr,
       dialog_player: None,
     })
   }
@@ -93,18 +111,20 @@ impl App {
 
   pub fn draw(&mut self, ui: &mut Ui) {
     self.model_renderer.draw(&self.model, &self.mvp);
-
+    
     let ctx = EditorContext {
       model: &mut self.model,
       animator: &mut self.animator,
       enummap: &mut self.enummap,
       dialog_mgr: &mut self.dialog_mgr,
       dialog_player: &mut self.dialog_player,
+      motion_mgr: &self.motion_mgr,
     };
     self.layout.draw(ui, ctx);
 
+
     ui.window("Preview").build(|| {
-      /*let available = ui.content_region_avail();
+      let available = ui.content_region_avail();
 
       if available[0] <= 0.0 || available[1] <= 0.0 {
         return;
@@ -128,12 +148,31 @@ impl App {
       Image::new(ui, self.texture_id, draw_size)
         .uv0([0.0, 1.0])
         .uv1([1.0, 0.0])
-        .build();*/
+        .build();
     });
   }
 
   pub fn resize(&mut self, width: u32, height: u32) {}
 
   pub fn keyboard(&mut self, event: KeyEvent) {
+    if let Some(dialog_player) = &mut self.dialog_player {
+      if !event.state.is_pressed() {
+        match event.physical_key {
+          PhysicalKey::Code(KeyCode::KeyI) => {
+            dialog_player.play();
+          }
+          PhysicalKey::Code(KeyCode::Space) => {
+            dialog_player.next();
+          }
+          PhysicalKey::Code(KeyCode::Digit1) => dialog_player.handle_input(0),
+          PhysicalKey::Code(KeyCode::Digit2) => dialog_player.handle_input(1),
+          PhysicalKey::Code(KeyCode::Digit3) => dialog_player.handle_input(2),
+          PhysicalKey::Code(KeyCode::Digit4) => dialog_player.handle_input(3),
+          PhysicalKey::Code(KeyCode::Digit5) => dialog_player.handle_input(4),
+          PhysicalKey::Code(KeyCode::Digit6) => dialog_player.handle_input(5),
+          _ => {}
+        }
+      }
+    }
   }
 }
