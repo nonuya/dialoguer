@@ -217,8 +217,8 @@ impl Graph {
 
       for (i, dialog_node) in dialog_nodes.iter().enumerate() {
         let from = match dialog {
-          Dialog::Conversation(_) => info_by_id[&name].outputs[0],
-          Dialog::Choicer(_) => info_by_id[&name].outputs[i],
+          Dialog::Conversation(_) => info_by_id[name].outputs[0],
+          Dialog::Choicer(_) => info_by_id[name].outputs[i],
         };
 
         for event in &dialog_node.events {
@@ -382,9 +382,9 @@ impl Graph {
 
   fn layout_group(order: &[OrderedNode], nodes: &mut [Node], origin: [f32; 2]) -> [f32; 2] {
     const DX: f32 = 400.0;
-    const DY: f32 = 50.0;
+    const DY: f32 = 40.0;
     const MAX_DEPTH_PER_BAND: usize = 10;
-    const BAND_GAP: f32 = 20.0;
+    const BAND_GAP: f32 = 30.0;
 
     let mut rows_per_local_depth = HashMap::<usize, usize>::new();
     let mut max_band = 0;
@@ -712,6 +712,10 @@ impl Graph {
       (Some(PinKind::Input), Some(PinKind::Output)) => Some((b, a)),
       _ => None, // mismo tipo en ambos extremos, o pin desconocido: link inválido
     }
+  }
+
+  pub fn get_node_names(&self) -> Vec<&String> {
+    self.nodes.iter().map(|n| n.name()).collect()
   }
 
   pub fn export_to_dialog(

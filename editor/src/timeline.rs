@@ -163,8 +163,15 @@ struct ContainerDragState {
 }
 
 pub enum Selection<'a> {
-  Container(usize, &'a mut Container), // Index, Container
-  Block(usize, &'a mut TimelineBlock), // ContainerID, Block
+  Block {
+    container_index: usize,
+    container_id: usize,
+    block: &'a mut TimelineBlock,
+  },
+  Container {
+    index: usize,
+    container: &'a mut Container,
+  },
 }
 
 pub struct Timeline {
@@ -224,11 +231,18 @@ impl Timeline {
         }
       }
 
-      containers.push(Container {
-        id,
-        name: node.label.to_string(),
-        blocks,
-      });
+      // Si solo es un Nodo con puros Sets
+      if !pending_set.is_empty() {
+        add_block(TimelineBlockType::Set(std::mem::take(&mut pending_set)));
+      }
+
+      if !blocks.is_empty() {
+        containers.push(Container {
+          id,
+          name: node.label.to_string(),
+          blocks,
+        });
+      }
     }
 
     Self {
@@ -520,22 +534,23 @@ impl Timeline {
   }
   pub fn get_selected(&mut self) -> Option<Selection<'_>> {
     if let Some((container_id, block_id)) = self.selected_block {
-      let container_idx = self.containers.iter().position(|c| c.id == container_id)?;
-      let block_idx = self.containers[container_idx]
+      let container_index = self.containers.iter().position(|c| c.id == container_id)?;
+      let block_idx = self.containers[container_index]
         .blocks
         .iter()
         .position(|b| b.id == block_id)?;
 
-      return Some(Selection::Block(
+      return Some(Selection::Block {
+        container_index,
         container_id,
-        &mut self.containers[container_idx].blocks[block_idx],
-      ));
+        block: &mut self.containers[container_index].blocks[block_idx],
+      });
     } else if let Some(container_id) = self.selected_container_id {
-      let container_idx = self.containers.iter().position(|c| c.id == container_id)?;
-      return Some(Selection::Container(
-        container_idx,
-        &mut self.containers[container_idx],
-      ));
+      let index = self.containers.iter().position(|c| c.id == container_id)?;
+      return Some(Selection::Container {
+        index,
+        container: &mut self.containers[index],
+      });
     } else {
       return None;
     }

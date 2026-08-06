@@ -29,6 +29,9 @@ pub struct Layout {
   is_main_layout: bool,
   selected_enum: Option<(Rc<str>, Rc<str>)>,
   enumlog: Vec<(Rc<str>, Rc<str>)>,
+  non_control: Rc<str>,
+  unchanged: Rc<str>,
+  empty: Rc<str>,
 }
 
 impl Layout {
@@ -49,6 +52,9 @@ impl Layout {
       selected_timeline_id: None,
       selected_node_id: None,
       new_modal_string: String::new(),
+      non_control: "NonControl".into(),
+      unchanged: "(Unchanged)".into(),
+      empty: "".into(),
     }
   }
 
@@ -413,7 +419,10 @@ impl Layout {
           } else {
             if ui.button("Play Conversation") {
               let dialog = timeline.export_to_dialog();
-              Self::play(&mut ctx, Some(("Initial".into(), vec![("Initial".into(), dialog)])));
+              Self::play(
+                &mut ctx,
+                Some(("Initial".into(), vec![("Initial".into(), dialog)])),
+              );
             }
           }
 
@@ -445,17 +454,41 @@ impl Layout {
             ui.same_line();
             ui.separator_vertical();
             ui.same_line();
-            match selected {
-              Selection::Block(container_id, block) => {
-                if ui.button("(D)elete") || (ui.io().key_alt() && ui.is_key_pressed(Key::D)) {
-                  pending_delete = Some(DeleteCommand::Block(container_id, block.id));
+
+            // Selected
+            if ui.button("Play Container") {
+              match selected {
+                Selection::Block {
+                  container_index, ..
+                } => {
+                  pending_play = Some(container_index);
+                }
+                Selection::Container { index, .. } => {
+                  pending_play = Some(index);
                 }
               }
-              Selection::Container(container_idx, container) => {
-                if ui.button("Play Container") {
-                  pending_play = Some(container_idx);
-                }
+            }
 
+            ui.same_line();
+
+            if ui.button("(D)elete") || (ui.io().key_alt() && ui.is_key_pressed(Key::D)) {
+              match &selected {
+                Selection::Block {
+                  container_id,
+                  block,
+                  ..
+                } => {
+                  pending_delete = Some(DeleteCommand::Block(*container_id, block.id));
+                }
+                Selection::Container { container, .. } => {
+                  pending_delete = Some(DeleteCommand::Container(container.id));
+                }
+              }
+            }
+
+            match selected {
+              Selection::Block { .. } => {}
+              Selection::Container { container, .. } => {
                 ui.same_line();
 
                 ui.separator_vertical();
@@ -485,16 +518,6 @@ impl Layout {
                 if ui.button("(N)ext") || (ui.io().key_alt() && ui.is_key_pressed(Key::N)) {
                   container.add_block(TimelineBlockType::Next);
                 }
-
-                ui.same_line();
-
-                ui.separator_vertical();
-
-                ui.same_line();
-
-                if ui.button("(D)elete") || (ui.io().key_alt() && ui.is_key_pressed(Key::D)) {
-                  pending_delete = Some(DeleteCommand::Container(container.id));
-                }
               }
             }
           }
@@ -511,8 +534,17 @@ impl Layout {
           if let Some(idx) = pending_play.take() {
             info!("Skipping to Conversation with Index {idx}...");
             let dialog = timeline.export_to_dialog();
-            Self::play(&mut ctx, Some(("Initial".into(), vec![("Initial".into(), dialog)])));
-            ctx.dialog_player.as_mut().unwrap().skip(idx, ctx.animator, ctx.dialog_mgr, ctx.enummap, ctx.motion_mgr);
+            Self::play(
+              &mut ctx,
+              Some(("Initial".into(), vec![("Initial".into(), dialog)])),
+            );
+            ctx.dialog_player.as_mut().unwrap().skip(
+              idx,
+              ctx.animator,
+              ctx.dialog_mgr,
+              ctx.enummap,
+              ctx.motion_mgr,
+            );
           }
 
           ui.separator();
@@ -521,7 +553,13 @@ impl Layout {
             .size([0.0, 0.0])
             .flags(WindowFlags::HORIZONTAL_SCROLLBAR)
             .build(ui, || {
-              timeline.draw(ui, ctx.dialog_player.as_ref().and_then(|p| p.current_node_index()));
+              timeline.draw(
+                ui,
+                ctx
+                  .dialog_player
+                  .as_ref()
+                  .and_then(|p| p.current_node_index()),
+              );
             });
         });
 
@@ -535,13 +573,17 @@ impl Layout {
 
           if let Some(selected) = timeline.get_selected() {
             match selected {
-              Selection::Container(_, container) => {
+              Selection::Container { container, .. } => {
                 ui.text("Who?");
                 ui.same_line();
                 ui.input_text(format!("##container_{}", container.id), &mut container.name)
                   .build();
               }
-              Selection::Block(container_id, block) => match &mut block.value {
+              Selection::Block {
+                block,
+                container_id,
+                ..
+              } => match &mut block.value {
                 TimelineBlockType::Text(text) => {
                   ui.text("Text:");
                   ui.same_line();
@@ -569,6 +611,29 @@ impl Layout {
                   let mut remove_index: Option<usize> = None;
                   let mut move_index: Option<(usize, isize)> = None; // (idx, offset: -1 sube, +1 baja)
 
+                  // ANIMATION
+                  Self::combo_box(
+                    ui,
+                    "Animation",
+                    anim,
+                    "##anim_combo",
+                    ctx.motion_mgr.names(),
+                    &self.unchanged,
+                    self.empty.clone(),
+                  );
+
+                  // MAIN CHOICER
+                  Self::combo_box(
+                    ui,
+                    "MainChoicer",
+                    main_choicer,
+                    "##main_choicer",
+                    self.graph.get_node_names(),
+                    &self.unchanged,
+                    self.empty.clone(),
+                  );
+
+                  ui.spacing();
                   ui.text("Parameters");
                   ui.separator();
                   for (idx, entry) in parameters.iter_mut().enumerate() {
@@ -592,10 +657,15 @@ impl Layout {
                         if let Some(_) =
                           ui.begin_combo(format!("##{}_{}", &entry.0, &entry.1), &entry.1)
                         {
-                          for value in &enumtype.values {
-                            let selected = entry.1 == *value.0;
-                            if ui.selectable_config(value.0).selected(selected).build() {
-                              entry.1 = value.0.clone();
+                          for value in enumtype
+                            .values
+                            .iter()
+                            .map(|v| v.0)
+                            .chain(std::iter::once(&self.non_control))
+                          {
+                            let selected = entry.1 == *value;
+                            if ui.selectable_config(value).selected(selected).build() {
+                              entry.1 = value.clone();
                             }
                           }
                         }
@@ -628,41 +698,16 @@ impl Layout {
                     params.sort_unstable_by_key(|&p| p.0);
                     for (prop_name, prop_value) in params {
                       if ui.selectable_config(prop_name).size([0.0, 0.0]).build() {
-                        parameters.push((prop_name.clone(), prop_value.values.iter().next().unwrap().0.clone()));
+                        parameters.push((
+                          prop_name.clone(),
+                          prop_value.values.iter().next().unwrap().0.clone(),
+                        ));
                         ui.close_current_popup();
                       }
                     }
                   }
-                  ui.spacing();
-                  ui.spacing();
-                  ui.text("Animation");
-                  ui.separator();
-                  let preview = if anim.is_empty() {
-                    &Rc::from("(Unchanged)")
-                  } else {
-                    &anim
-                  };
-
-                  ui.set_next_item_width(ui.content_region_avail()[0]);
-                  if let Some(_) = ui.begin_combo("##anim_combo", preview) {
-                    let unchanged_selected = anim.is_empty();
-                    if ui
-                      .selectable_config("(Unchanged)")
-                      .selected(unchanged_selected)
-                      .build()
-                    {
-                      *anim = Rc::from("");
-                    }
-
-                    for anim_name in ctx.motion_mgr.names() {
-                      let selected = anim == anim_name;
-                      if ui.selectable_config(anim_name).selected(selected).build() {
-                        *anim = anim_name.clone();
-                      }
-                    }
-                  }
                 }
-                _ => unimplemented!("Missing implementation for Selected properties"),
+                TimelineBlockType::Next => {}
               },
             }
           }
@@ -670,11 +715,56 @@ impl Layout {
       });
   }
 
+  fn combo_box<Opts, T>(
+    ui: &Ui,
+    name: &str,
+    target: &mut Rc<str>,
+    id: &str,
+    options: Opts,
+    default_value: &Rc<str>,
+    empty_value: Rc<str>,
+  ) where
+    Opts: IntoIterator<Item = T>,
+    T: AsRef<str>,
+  {
+    ui.spacing();
+    ui.text(name);
+    ui.separator();
+    let preview = if target.is_empty() {
+      default_value
+    } else {
+      &target
+    };
+
+    ui.set_next_item_width(ui.content_region_avail()[0]);
+    if let Some(_) = ui.begin_combo(id, preview) {
+      let unchanged_selected = target.is_empty();
+      if ui
+        .selectable_config("(Unchanged)")
+        .selected(unchanged_selected)
+        .build()
+      {
+        *target = empty_value;
+      }
+
+      let mut options: Vec<_> = options.into_iter().collect();
+      options.sort_unstable_by(|a, b| natord::compare(a.as_ref(), b.as_ref()));
+
+      for opt in options {
+        let selected = target.as_ref() == opt.as_ref();
+        if ui.selectable_config(&opt).selected(selected).build() {
+          *target = Rc::from(opt.as_ref());
+        }
+      }
+    }
+  }
+
   fn play(
     ctx: &mut EditorContext,
     start_point: Option<(String, Vec<(Rc<str>, core::dialog::Dialog)>)>,
   ) {
     ctx.model.load_saved_parameters();
+    ctx.animator.stop_timer();
     ctx.animator.clear_parameters();
     ctx.animator.clear_motion();
 

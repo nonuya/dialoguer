@@ -45,11 +45,11 @@ impl DialogManager {
     Ok(Self::new_from_entries(entries))
   }
 
-  pub fn get_dialogs(&self) -> Vec<(Rc<str>, &Dialog)> {
+  pub fn get_dialogs(&self) -> Vec<(&Rc<str>, &Dialog)> {
     self
       .map
       .iter()
-      .map(|(k, v)| (k.clone(), &self.dialogs[*v]))
+      .map(|(k, v)| (k, &self.dialogs[*v]))
       .collect()
   }
 
