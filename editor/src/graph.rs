@@ -385,9 +385,11 @@ impl Graph {
     const DY: f32 = 40.0;
     const MAX_DEPTH_PER_BAND: usize = 10;
     const BAND_GAP: f32 = 30.0;
+    const GRAPH_GAP: f32 = 100.0;
 
-    let mut rows_per_local_depth = HashMap::<usize, usize>::new();
+    let mut height_per_local_depth = HashMap::<usize, f32>::new();
     let mut max_band = 0;
+    let mut max_offset = 0.0;
 
     for OrderedNode { id, depth } in order {
       let band = *depth / MAX_DEPTH_PER_BAND;
@@ -395,27 +397,34 @@ impl Graph {
 
       max_band = max_band.max(band);
 
-      let row = rows_per_local_depth.entry(local_depth).or_default();
+      let y_offset = height_per_local_depth.entry(local_depth).or_default();
+
+      let node = nodes.iter_mut().find(|n| n.id() == *id).unwrap();
+
+      let extra_y = match node {
+        Node::Choicer { options, .. } => {
+          options.len() as f32 * 30.0
+        }
+        _ => 0.0,
+      };
 
       let pos = [
         origin[0] + local_depth as f32 * DX,
-        origin[1] + band as f32 * BAND_GAP + *row as f32 * DY,
+        origin[1] + band as f32 * BAND_GAP + *y_offset,
       ];
 
-      *row += 1;
+      node.set_position(pos);
 
-      nodes
-        .iter_mut()
-        .find(|n| n.id() == *id)
-        .unwrap()
-        .set_position(pos);
+      *y_offset += DY + extra_y;
+      max_offset = y_offset.max(max_offset);
     }
 
     [
       origin[0],
-      origin[1] + (max_band + 1) as f32 * BAND_GAP + 200.0,
+      origin[1] + (max_band + 1) as f32 * BAND_GAP + GRAPH_GAP + max_offset,
     ]
   }
+
   fn add_conversation(&mut self, name: String) -> NodeId {
     let id = self.id_gen.next_node();
     let input = self.id_gen.next_pin();
