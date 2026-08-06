@@ -18,7 +18,7 @@ pub struct Model {
   texture: glow::Texture,
   meshes: Vec<Mesh>,
   clipping_manager: ClippingManager,
-  parameters: HashMap<String, usize>,
+  parameters: HashMap<Rc<str>, usize>,
 }
 
 impl Model {
@@ -31,7 +31,7 @@ impl Model {
     let parameters = cubism
       .parameters()
       .enumerate()
-      .map(|(i, p)| (p.id.to_string(), i))
+      .map(|(i, p)| (p.id.into(), i))
       .collect();
     // ==================================
 
@@ -89,7 +89,7 @@ impl Model {
     motion.update(self.cubism.model_mut()) 
   }
 
-  pub fn set_parameter_value(&mut self, id: &String, val: f32) -> bool {
+  pub fn set_parameter_value(&mut self, id: &Rc<str>, val: f32) -> bool {
     self.parameters.get(id)
       .is_some_and(|&idx| {
         self.cubism.model_mut().set_parameter_value(idx, val);
@@ -97,7 +97,7 @@ impl Model {
       })
   }
 
-  pub fn get_parameter_value(&self, id: &String) -> Option<f32> {
+  pub fn get_parameter_value(&self, id: &Rc<str>) -> Option<f32> {
     self.parameters.get(id).and_then(|&idx| Some(self.cubism.parameter_at(idx).value))
   }
 

@@ -124,7 +124,8 @@ impl App {
 
 
     ui.window("Preview").build(|| {
-      let available = ui.content_region_avail();
+      // Put this section in comment if you wanna work with both of your hands
+      /*let available = ui.content_region_avail();
 
       if available[0] <= 0.0 || available[1] <= 0.0 {
         return;
@@ -148,7 +149,7 @@ impl App {
       Image::new(ui, self.texture_id, draw_size)
         .uv0([0.0, 1.0])
         .uv1([1.0, 0.0])
-        .build();
+        .build();*/
     });
   }
 

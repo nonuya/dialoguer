@@ -1,7 +1,7 @@
 use std::{
   collections::HashMap,
   fs,
-  path::{Path, PathBuf},
+  path::{Path, PathBuf}, rc::Rc,
 };
 
 use crate::live2d::Model;
@@ -13,22 +13,22 @@ use serde::{Deserialize, Serialize};
 pub struct Animator {
   motion: Option<Motion>,
   timer: Option<f32>,
-  map: HashMap<String, Value>,
+  map: HashMap<Rc<str>, Value>,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct EnumMap {
-  pub enums: HashMap<String, EnumType>,
+  pub enums: HashMap<Rc<str>, EnumType>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
 pub struct EnumType {
-  pub values: HashMap<String, Vec<ParamValue>>,
+  pub values: HashMap<Rc<str>, Vec<ParamValue>>,
 }
 /// Ver "assets/example.map" para un ejemplo
 #[derive(Serialize, Deserialize)]
 pub struct ParamValue {
-  pub name: String,
+  pub name: Rc<str>,
   pub value: Value,
 
   #[serde(default)]
@@ -37,8 +37,8 @@ pub struct ParamValue {
 
 #[derive(Serialize, Deserialize)]
 pub struct Modification {
-  pub lhs: String,
-  pub rhs: String,
+  pub lhs: Rc<str>,
+  pub rhs: Rc<str>,
   pub then: f32,
 }
 
@@ -83,7 +83,7 @@ impl Animator {
     self.motion = Some(motion);
   }
 
-  pub fn is_parameter_equal_to_value(&self, id: &String, b: &Value) -> bool {
+  pub fn is_parameter_equal_to_value(&self, id: &str, b: &Value) -> bool {
     self.map.get(id).is_some_and(|a| {
       let lhs = match a {
         Value::Fixed(f) => f,
@@ -102,9 +102,9 @@ impl Animator {
     self.map.clear();
   }
 
-  pub fn set_parameter(&mut self, id: &String, mut value: Value) {
+  pub fn set_parameter(&mut self, id: Rc<str>, mut value: Value) {
     // If we change an existing value, we need to start from that value and go to new value
-    if let Some(old) = self.map.get(id) {
+    if let Some(old) = self.map.get(&id) {
       match (old, &mut value) {
         (
           Value::Smooth {
@@ -133,10 +133,10 @@ impl Animator {
       _ => {}
     }
 
-    self.map.insert(id.to_string(), value);
+    self.map.insert(id, value);
   }
 
-  pub fn remove_parameter(&mut self, id: &String) {
+  pub fn remove_parameter(&mut self, id: &Rc<str>) {
     self.map.remove(id);
   }
 
@@ -203,17 +203,18 @@ impl Animator {
     model.update_parameters();
   }
 
-  pub fn motion_names(&self) -> Vec<&String> {
+  pub fn motion_names(&self) -> Vec<&Rc<str>> {
     let mut names: Vec<_> = self.map.keys().collect(); 
     names.sort();
     names
   }
 }
 
-pub struct MotionManager(HashMap<String, Motion>);
+pub struct MotionManager(HashMap<Rc<str>, Motion>);
 
 impl MotionManager {
   pub fn new(path: &PathBuf, model3: &cubism::json::model::Model3) -> anyhow::Result<Self> {
+    /*
     let motions = model3
       .file_references
       .motions
@@ -230,8 +231,8 @@ impl MotionManager {
 
         Ok((name.to_string(), motion))
       })
-    .collect::<anyhow::Result<HashMap<_,_>>>()?;
-    // let motions = HashMap::new();
+    .collect::<anyhow::Result<HashMap<_,_>>>()?;*/
+    let motions = HashMap::new();
 
     Ok(Self(motions))
   }

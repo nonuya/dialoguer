@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use dear_imgui_rs::*;
 
 const BLOCK_WIDTH: f32 = 50.0;
@@ -16,10 +18,10 @@ pub enum TimelineBlockType {
 
 #[derive(Default)]
 pub struct TimelineSetBlockType {
-  pub parameters: Vec<(String, String)>, // EnumName ValueName
-  pub anim: String,
-  pub view: String,
-  pub main_choicer: String,
+  pub parameters: Vec<(Rc<str>, Rc<str>)>, // EnumName ValueName
+  pub anim: Rc<str>,
+  pub view: Rc<str>,
+  pub main_choicer: Rc<str>,
 }
 
 impl TimelineSetBlockType {
@@ -107,7 +109,7 @@ impl Container {
     for b in &self.blocks {
       match &b.value {
         TimelineBlockType::Wait(seconds) => events.push(Event::Wait(*seconds)),
-        TimelineBlockType::Text(text) => events.push(Event::Text(text.clone())),
+        TimelineBlockType::Text(text) => events.push(Event::Text(text.as_str().into())),
         TimelineBlockType::Set(TimelineSetBlockType {
           parameters,
           anim,
@@ -127,7 +129,7 @@ impl Container {
           }
 
           for p in parameters {
-            if p.1 == "NonControl" {
+            if p.1.as_ref() == "NonControl" {
               events.push(Event::RemoveParamater(p.0.clone()));
             } else {
               events.push(Event::SetParameter(p.0.clone(), p.1.clone()));
@@ -139,7 +141,7 @@ impl Container {
     }
 
     core::dialog::DialogNode {
-      label: self.name.clone(),
+      label: self.name.as_str().into(),
       events,
     }
   }
@@ -210,7 +212,7 @@ impl Timeline {
             }
 
             let value = match other {
-              Event::Text(text) => TimelineBlockType::Text(text.clone()),
+              Event::Text(text) => TimelineBlockType::Text(text.to_string()),
               Event::Wait(seconds) => TimelineBlockType::Wait(*seconds),
               Event::Next => TimelineBlockType::Next,
               Event::Jump(..) => continue,
@@ -224,7 +226,7 @@ impl Timeline {
 
       containers.push(Container {
         id,
-        name: node.label.clone(),
+        name: node.label.to_string(),
         blocks,
       });
     }
@@ -263,7 +265,7 @@ impl Timeline {
     (lefts, widths)
   }
 
-  pub fn draw(&mut self, ui: &Ui, current: Option<usize>) {
+  pub fn draw(&mut self, ui: &Ui, current_container_index: Option<usize>) {
     let origin = ui.cursor_screen_pos();
     let draw_list = ui.get_window_draw_list();
 
@@ -335,7 +337,7 @@ impl Timeline {
         [0.4, 0.6, 0.95, 1.0]
       } else if is_container_highlighted {
         SELECTED_COLOR
-      } else if current.is_some_and(|idx| container_idx == idx) {
+      } else if current_container_index.is_some_and(|idx| container_idx == idx) {
         [1.0, 0.0, 0.0, 1.0]
       } else {
         [0.05, 0.05, 0.05, 1.0]

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::{collections::{HashMap, VecDeque}, rc::Rc};
 
 use crate::{
   dialog::parser::{Dialog, Event, Token, dialog_parser},
@@ -10,17 +10,17 @@ use log::{debug, warn};
 
 // Esto indicará si qué cosa será nuestro primer dialogo cuando presionemos "Iniciar Dialogo"
 pub enum DialogEntryPoint {
-  Choicer(Vec<(String, DialogIter)>),
+  Choicer(Vec<(Rc<str>, DialogIter)>),
   Conversation(DialogIter),
 }
 
 pub struct DialogManager {
   dialogs: Vec<Dialog>,
-  map: HashMap<String, usize>,
+  map: HashMap<Rc<str>, usize>,
 }
 
 impl DialogManager {
-  pub fn new_from_entries(entries: Vec<(String, Dialog)>) -> Self {
+  pub fn new_from_entries(entries: Vec<(Rc<str>, Dialog)>) -> Self {
     let (dialogs, map) = entries.into_iter().fold(
       (Vec::new(), HashMap::new()),
       |(mut dialogs, mut map), (id, dialog)| {
@@ -45,8 +45,12 @@ impl DialogManager {
     Ok(Self::new_from_entries(entries))
   }
 
-  pub fn get_dialogs(&self) -> &Vec<Dialog> {
-    &self.dialogs
+  pub fn get_dialogs(&self) -> Vec<(Rc<str>, &Dialog)> {
+    self
+      .map
+      .iter()
+      .map(|(k, v)| (k.clone(), &self.dialogs[*v]))
+      .collect()
   }
 
   pub fn get_dialog_by_id(&self, id: &str) -> Option<&Dialog> {
@@ -123,7 +127,7 @@ pub struct ConversationIter {
 enum PlayerState {
   Running,
   WaitingInput,
-  WaitingChoice(Vec<(String, DialogIter)>),
+  WaitingChoice(Vec<(Rc<str>, DialogIter)>),
   Finished,
 }
 
@@ -146,7 +150,7 @@ impl DialogPlayer {
     }
   }
 
-  pub fn current(&self) -> Option<usize> {
+  pub fn current_node_index(&self) -> Option<usize> {
     if matches!(self.state, PlayerState::Finished) {
       return None;
     }
@@ -209,7 +213,7 @@ impl DialogPlayer {
             Some(myenum) => match myenum.values.get(enum_value) {
               Some(params) => {
                 for p in params {
-                  animator.set_parameter(&p.name, get_parameter_value(p, enum_map, animator));
+                  animator.set_parameter(p.name.clone(), get_parameter_value(p, enum_map, animator));
                 }
               }
               None => warn!(
@@ -244,19 +248,19 @@ impl DialogPlayer {
 
     if iter.queue.pop_front().is_none() {
       self.state = PlayerState::Finished;
-      self.iter = None;
+      self.change_iter(None);
     } else {
       self.state = PlayerState::Running;
     }
   }
+
   pub fn play(&mut self) {
     match &self.initial_dialog {
       DialogEntryPoint::Choicer(choices) => {
         self.state = PlayerState::WaitingChoice(choices.clone());
       }
       DialogEntryPoint::Conversation(iter) => {
-        self.iter = Some(iter.clone());
-        self.total = iter.queue.len();
+        self.change_iter(Some(iter.clone()));
       }
     }
   }
@@ -361,7 +365,7 @@ impl DialogPlayer {
             Some(myenum) => match myenum.values.get(enum_value) {
               Some(params) => {
                 for p in params {
-                  animator.set_parameter(&p.name, get_parameter_value(p, enum_map, animator));
+                  animator.set_parameter(p.name.clone(), get_parameter_value(p, enum_map, animator));
                 }
               }
               None => warn!(
@@ -374,21 +378,24 @@ impl DialogPlayer {
           conversation_iter.events.pop_front();
           continue;
         }
-        Event::Jump(id) => match dialog_mgr.build(id) {
-          Some(entry_point) => match entry_point {
-            DialogEntryPoint::Choicer(choices) => {
-              warn!("Jumping to Choicer '{}'", id);
-              self.state = PlayerState::WaitingChoice(choices.clone());
-              break;
-            }
-            DialogEntryPoint::Conversation(iter) => {
-              warn!("Jumping to Conversation '{}'", id);
-              next_iter = Some(iter);
-              break;
-            }
-          },
-          None => warn!("Failed to jumping. '{}' doesnt exists", id),
-        },
+        Event::Jump(id) => {
+          // self.current_id = id.to_string();
+          match dialog_mgr.build(id) {
+            Some(entry_point) => match entry_point {
+              DialogEntryPoint::Choicer(choices) => {
+                warn!("Jumping to Choicer '{}'", id);
+                self.state = PlayerState::WaitingChoice(choices.clone());
+                break;
+              }
+              DialogEntryPoint::Conversation(iter) => {
+                warn!("Jumping to Conversation '{}'", id);
+                next_iter = Some(iter);
+                break;
+              }
+            },
+            None => warn!("Failed to jumping. '{}' doesnt exists", id),
+          }
+        }
         Event::RemoveParamater(enum_type) => {
           match enum_map.enums.get(enum_type) {
             Some(myenum) => {
@@ -426,8 +433,21 @@ impl DialogPlayer {
       break;
     }
 
-    if let Some(next) = next_iter {
-      *iter = next;
+    if let Some(next) = next_iter.take() {
+      self.change_iter(Some(next));
+    }
+  }
+
+  fn change_iter(&mut self, opt_iter: Option<DialogIter>) {
+    match opt_iter {
+      Some(iter) => {
+        self.total = iter.queue.len();
+        self.iter = Some(iter);
+      }
+      None => {
+        self.total = 0;
+        self.iter = None;
+      }
     }
   }
 }

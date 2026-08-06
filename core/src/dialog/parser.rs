@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use chumsky::prelude::*;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -126,20 +128,20 @@ fn parse_float<'a>() -> impl Parser<'a, &'a str, f32, Extra<'a>> {
 
 #[derive(Debug)]
 pub enum Event {
-  Text(String),
-  SetMainChoicer(String),
-  SetAnim(String),
-  SetView(String),
-  Jump(String),
-  SetParameter(String, String),
-  RemoveParamater(String),
+  Text(Rc<str>),
+  SetMainChoicer(Rc<str>),
+  SetAnim(Rc<str>),
+  SetView(Rc<str>),
+  Jump(Rc<str>),
+  SetParameter(Rc<str>, Rc<str>),
+  RemoveParamater(Rc<str>),
   Wait(f32),
   Next,
 }
 
 #[derive(Debug)]
 pub struct DialogNode {
-  pub label: String,
+  pub label: Rc<str>,
   pub events: Vec<Event>,
 }
 
@@ -150,25 +152,25 @@ pub enum Dialog {
 }
 
 pub fn dialog_parser<'a>()
--> impl Parser<'a, &'a [Token<'a>], Vec<(String, Dialog)>, extra::Err<Rich<'a, Token<'a>>>> {
+-> impl Parser<'a, &'a [Token<'a>], Vec<(Rc<str>, Dialog)>, extra::Err<Rich<'a, Token<'a>>>> {
   let event = select! {
-    Token::Text(text) => Event::Text(text.to_string()),
+    Token::Text(text) => Event::Text(text.into()),
     Token::Command(Command::Wait(seconds)) => Event::Wait(seconds),
-    Token::Command(Command::Jump(id)) => Event::Jump(id.to_string()),
+    Token::Command(Command::Jump(id)) => Event::Jump(id.into()),
     Token::Command(Command::Set { r#enum, value }) => {
       match r#enum {
-        "AnimType" => Event::SetAnim(value.to_string()),
-        "ViewType" => Event::SetView(value.to_string()),
+        "AnimType" => Event::SetAnim(value.into()),
+        "ViewType" => Event::SetView(value.into()),
         _ => {
           if value == "NonAction" || value == "NonControl" {
-            Event::RemoveParamater(r#enum.to_string())
+            Event::RemoveParamater(r#enum.into())
           } else {
-            Event::SetParameter(r#enum.to_string(), value.to_string())
+            Event::SetParameter(r#enum.into(), value.into())
           }
         }
       }
     },
-    Token::Command(Command::SetMainChoicer(id)) => Event::SetMainChoicer(id.to_string()),
+    Token::Command(Command::SetMainChoicer(id)) => Event::SetMainChoicer(id.into()),
     Token::Command(Command::Next) => Event::Next
   };
 
@@ -176,7 +178,7 @@ pub fn dialog_parser<'a>()
     Token::Speaker(speaker) => speaker
   }
   .then(event.repeated().collect())
-  .map(|(who, events)| DialogNode { label: who.to_string(), events });
+  .map(|(who, events)| DialogNode { label: who.into(), events });
 
   let conversation_block = select! {
     Token::Block(Block::Conversation(id)) => id
@@ -185,16 +187,16 @@ pub fn dialog_parser<'a>()
   .then_ignore(select! {
     Token::End => ()
   })
-  .map(|(id, items)| (id.to_string(), Dialog::Conversation(items)));
+  .map(|(id, items)| (id.into(), Dialog::Conversation(items)));
 
   let choice_item = select! {
     Token::Choice(label) => label
   }
   // Many things here?
   .then(select! {
-    Token::Command(Command::Jump(goto)) => goto.to_string(),
+    Token::Command(Command::Jump(goto)) => goto.into(),
   })
-  .map(|(label, goto)| DialogNode { label: label.to_string(), events: vec![Event::Jump(goto)] });
+  .map(|(label, goto)| DialogNode { label: label.into(), events: vec![Event::Jump(goto)] });
 
   let choicer_block = select! {
     Token::Block(Block::Choicer(id)) => id
@@ -203,7 +205,7 @@ pub fn dialog_parser<'a>()
   .then_ignore(select! {
     Token::End => ()
   })
-  .map(|(id, items)| (id.to_string(), Dialog::Choicer(items)));
+  .map(|(id, items)| (id.into(), Dialog::Choicer(items)));
 
   choice((conversation_block, choicer_block))
     .repeated()

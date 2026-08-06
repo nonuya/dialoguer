@@ -1,7 +1,7 @@
 use dear_imgui_rs::*;
 use dear_node_editor::NodeId;
 use log::{info, warn};
-use std::collections::HashMap;
+use std::{collections::HashMap, rc::Rc};
 
 use crate::{
   graph::Graph,
@@ -27,8 +27,8 @@ pub struct Layout {
   selected_node_id: Option<NodeId>,     // For Preview
   selected_timeline_id: Option<NodeId>, // For Timeline
   is_main_layout: bool,
-  selected_enum: Option<(String, String)>,
-  enumlog: Vec<(String, String)>,
+  selected_enum: Option<(Rc<str>, Rc<str>)>,
+  enumlog: Vec<(Rc<str>, Rc<str>)>,
 }
 
 impl Layout {
@@ -169,7 +169,7 @@ impl Layout {
           if ui.button("Preview") {
             self.enumlog.push((enum_name.clone(), value_name.clone()));
             for p in &*params {
-              ctx.animator.set_parameter(&p.name, p.value);
+              ctx.animator.set_parameter(p.name.clone(), p.value);
             }
           }
 
@@ -182,7 +182,7 @@ impl Layout {
           ui.separator();
 
           for p in params {
-            let _scope = ui.push_id(&p.name);
+            let _scope = ui.push_id(p.name.as_ref());
 
             ui.separator();
             ui.text(&p.name);
@@ -314,6 +314,7 @@ impl Layout {
                 if ui.button("Play") {
                   match self.graph.export_to_dialog(id, &self.timelines) {
                     Ok(dialogs) => {
+                      println!("{:#?}", dialogs);
                       let name = self.graph.get_node_by_id(id).unwrap().name();
                       Self::play(&mut ctx, Some((name.clone(), dialogs)));
                     }
@@ -520,7 +521,7 @@ impl Layout {
             .size([0.0, 0.0])
             .flags(WindowFlags::HORIZONTAL_SCROLLBAR)
             .build(ui, || {
-              timeline.draw(ui, ctx.dialog_player.as_ref().and_then(|p| p.current()));
+              timeline.draw(ui, ctx.dialog_player.as_ref().and_then(|p| p.current_node_index()));
             });
         });
 
@@ -623,11 +624,11 @@ impl Layout {
                     ui.open_popup("##add_entry_popup");
                   }
                   if let Some(_) = ui.begin_popup("##add_entry_popup") {
-                    let mut params: Vec<_> = ctx.enummap.enums.keys().collect();
-                    params.sort_unstable_by_key(|&p| p);
-                    for prop_name in params {
+                    let mut params: Vec<_> = ctx.enummap.enums.iter().collect();
+                    params.sort_unstable_by_key(|&p| p.0);
+                    for (prop_name, prop_value) in params {
                       if ui.selectable_config(prop_name).size([0.0, 0.0]).build() {
-                        parameters.push((prop_name.clone(), String::new()));
+                        parameters.push((prop_name.clone(), prop_value.values.iter().next().unwrap().0.clone()));
                         ui.close_current_popup();
                       }
                     }
@@ -637,10 +638,11 @@ impl Layout {
                   ui.text("Animation");
                   ui.separator();
                   let preview = if anim.is_empty() {
-                    "(Unchanged)"
+                    &Rc::from("(Unchanged)")
                   } else {
-                    anim.as_str()
+                    &anim
                   };
+
                   ui.set_next_item_width(ui.content_region_avail()[0]);
                   if let Some(_) = ui.begin_combo("##anim_combo", preview) {
                     let unchanged_selected = anim.is_empty();
@@ -649,7 +651,7 @@ impl Layout {
                       .selected(unchanged_selected)
                       .build()
                     {
-                      anim.clear();
+                      *anim = Rc::from("");
                     }
 
                     for anim_name in ctx.animator.motion_names() {
@@ -670,7 +672,7 @@ impl Layout {
 
   fn play(
     ctx: &mut EditorContext,
-    start_point: Option<(String, Vec<(String, core::dialog::Dialog)>)>,
+    start_point: Option<(String, Vec<(Rc<str>, core::dialog::Dialog)>)>,
   ) {
     ctx.model.load_saved_parameters();
     ctx.animator.clear_parameters();

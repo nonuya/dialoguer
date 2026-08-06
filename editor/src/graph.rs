@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, rc::Rc};
 
 use anyhow::Context;
 use dear_imgui_rs::*;
@@ -119,6 +119,220 @@ impl Graph {
       },
     )
   }
+
+  /*
+  pub fn new(
+    dialog_mgr: &core::dialog::DialogManager,
+  ) -> (HashMap<NodeId, crate::timeline::Timeline>, Self) {
+    use core::dialog::{Dialog, Event};
+    use std::collections::HashSet;
+
+    let mut timelines = HashMap::new();
+    let mut nodes = Vec::new();
+    let mut links = Vec::new();
+    let mut id_gen = IdGen::new();
+
+    struct NodeInfo {
+      input: PinId,
+      outputs: Vec<PinId>,
+    }
+    let mut info_by_id: HashMap<String, NodeInfo> = HashMap::new();
+
+    // --- 1ra pasada: crear Node con posición placeholder (se ajusta después) ---
+
+    // --- 2da pasada: crear los Link a partir de los Jump + adjacency dirigida y no dirigida ---
+    // directed: name -> target (para las capas dentro de un grupo)
+    // undirected: ambos sentidos (para detectar componentes conexas)
+    let mut directed: HashMap<String, Vec<String>> =
+      info_by_id.keys().map(|k| (k.clone(), Vec::new())).collect();
+    let mut undirected: HashMap<String, Vec<String>> =
+      info_by_id.keys().map(|k| (k.clone(), Vec::new())).collect();
+
+    for (name, dialog) in dialog_mgr.get_dialogs() {
+      let dialog_nodes: &Vec<core::dialog::DialogNode> = match dialog {
+        Dialog::Conversation(dn) => dn,
+        Dialog::Choicer(dn) => dn,
+      };
+
+      for (i, dialog_node) in dialog_nodes.iter().enumerate() {
+        let from = match dialog {
+          Dialog::Conversation(_) => info_by_id[name].outputs[0],
+          Dialog::Choicer(_) => info_by_id[name].outputs[i],
+        };
+
+        for event in &dialog_node.events {
+          if let Event::Jump(target_id) = event {
+            match info_by_id.get(target_id) {
+              Some(target_info) => {
+                links.push(Link {
+                  id: id_gen.next_link(),
+                  from,
+                  to: target_info.input,
+                });
+
+                if !directed[name].iter().any(|t| t == target_id) {
+                  directed.get_mut(name).unwrap().push(target_id.clone());
+                }
+                if !undirected[name].iter().any(|t| t == target_id) {
+                  undirected.get_mut(name).unwrap().push(target_id.clone());
+                }
+                if !undirected[target_id].iter().any(|t| t == name) {
+                  undirected.get_mut(target_id).unwrap().push(name.clone());
+                }
+              }
+              None => {
+                warn!("Jump apunta a ID inexistente {target_id}");
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // --- Agrupar por componente conexa (BFS no dirigido), respetando orden de inserción ---
+    let insertion_order: Vec<_> = dialog_mgr
+      .get_dialogs()
+      .iter()
+      .map(|(name, _)| *name)
+      .collect();
+
+    let mut visited: HashSet<String> = HashSet::new();
+    let mut groups: Vec<Vec<String>> = Vec::new();
+
+    for start in insertion_order {
+      if visited.contains(start) {
+        continue;
+      }
+
+      let mut group = Vec::new();
+      let mut queue: VecDeque<String> = VecDeque::from([start.clone()]);
+      visited.insert(start.clone());
+
+      while let Some(current) = queue.pop_front() {
+        group.push(current.clone());
+        for neighbor in &undirected[&current] {
+          if visited.insert(neighbor.clone()) {
+            queue.push_back(neighbor.clone());
+          }
+        }
+      }
+
+      groups.push(group);
+    }
+
+    // --- Reordenar el Vec<Node> por grupo, con capas dirigidas dentro de cada grupo ---
+    let mut nodes_by_name: HashMap<String, Node> =
+      nodes.into_iter().map(|n| (n.name().clone(), n)).collect();
+
+    let mut nodes: Vec<Node> = Vec::with_capacity(nodes_by_name.len());
+
+    let mut cursor_x = 0.0_f32;
+    let mut cursor_y = 0.0_f32;
+    let mut row_max_height = 0.0_f32;
+
+    for group in &groups {
+      let group_set: HashSet<&String> = group.iter().collect();
+
+      let mut in_degree_local: HashMap<&String, usize> = group.iter().map(|n| (n, 0)).collect();
+      for name in group {
+        for target in &directed[name] {
+          if group_set.contains(target) {
+            *in_degree_local.get_mut(target).unwrap() += 1;
+          }
+        }
+      }
+
+      let mut layer_by_name: HashMap<&String, i32> = group.iter().map(|n| (n, 0)).collect();
+      let mut remaining = in_degree_local.clone();
+
+      let mut local_queue: Vec<&String> =
+        group.iter().filter(|n| in_degree_local[*n] == 0).collect();
+      local_queue.sort_by_key(|n| group.iter().position(|x| x == *n).unwrap());
+      let mut local_queue: VecDeque<&String> = local_queue.into();
+
+      let mut layered_order: Vec<&String> = Vec::with_capacity(group.len());
+
+      while let Some(name) = local_queue.pop_front() {
+        layered_order.push(name);
+        let current_layer = layer_by_name[name];
+
+        for target in &directed[name] {
+          if !group_set.contains(target) {
+            continue;
+          }
+          let deg = remaining.get_mut(target).unwrap();
+          *deg -= 1;
+
+          let target_layer = layer_by_name.get_mut(target).unwrap();
+          *target_layer = (*target_layer).max(current_layer + 1);
+
+          if *deg == 0 {
+            local_queue.push_back(target);
+          }
+        }
+      }
+
+      if layered_order.len() < group.len() {
+        for name in group {
+          if !layered_order.contains(&name) {
+            layered_order.push(name);
+          }
+        }
+      }
+
+      // --- Calcular tamaño del grupo ANTES de decidir el cursor ---
+      let mut slot_per_layer: HashMap<i32, f32> = HashMap::new();
+      let mut max_layer = 0;
+      for name in &layered_order {
+        let layer = layer_by_name[*name];
+        max_layer = max_layer.max(layer);
+        *slot_per_layer.entry(layer).or_insert(0.0) += 1.0;
+      }
+      let group_width = (max_layer as f32 + 1.0) * NODE_SPACING_X;
+      let group_height = slot_per_layer.values().cloned().fold(0.0_f32, f32::max) * NODE_SPACING_Y;
+
+      // --- Salto de fila ANTES de posicionar ---
+      if cursor_x > 0.0 && cursor_x + group_width > MAX_ROW_WIDTH {
+        cursor_x = 0.0;
+        cursor_y += row_max_height + GROUP_SPACING_Y;
+        row_max_height = 0.0;
+      }
+
+      // --- Ahora sí, posicionar cada nodo con el cursor ya corregido ---
+      let mut slot_per_layer: HashMap<i32, f32> = HashMap::new();
+      for name in &layered_order {
+        let Some(mut node) = nodes_by_name.remove(*name) else {
+          continue;
+        };
+
+        let layer = layer_by_name[*name];
+        let slot = slot_per_layer.entry(layer).or_insert(0.0);
+        let y = *slot;
+        *slot += 1.0;
+
+        node.set_position([
+          cursor_x + layer as f32 * NODE_SPACING_X,
+          cursor_y + y * NODE_SPACING_Y,
+        ]);
+        nodes.push(node);
+      }
+
+      cursor_x += group_width + GROUP_SPACING_X;
+      row_max_height = row_max_height.max(group_height);
+    }
+
+    (
+      timelines,
+      Self {
+        first_frame: true,
+        selected_node_id: None,
+        nodes,
+        links,
+        id_gen,
+      },
+    )
+  }
+  */
 
   fn add_conversation(&mut self, name: String) -> NodeId {
     let id = self.id_gen.next_node();
@@ -403,7 +617,7 @@ impl Graph {
     &self,
     id: NodeId,
     timelines: &HashMap<NodeId, crate::timeline::Timeline>,
-  ) -> anyhow::Result<Vec<(String, core::dialog::Dialog)>> {
+  ) -> anyhow::Result<Vec<(Rc<str>, core::dialog::Dialog)>> {
     use core::dialog::{Dialog, DialogNode, Event};
     use std::collections::VecDeque;
 
@@ -411,7 +625,7 @@ impl Graph {
     let node = self
       .get_node_by_id(id)
       .context("Failed to get Node by Id")?;
-    let mut dialogs: Vec<(String, Dialog)> = Vec::new();
+    let mut dialogs: Vec<(Rc<str>, Dialog)> = Vec::new();
     queue.push_back(node);
 
     while let Some(node) = queue.pop_front() {
@@ -430,7 +644,7 @@ impl Graph {
               Dialog::Conversation(nodes) => {
                 nodes.push(DialogNode {
                   label: "Player".into(),
-                  events: vec![Event::Jump(next.name().clone())],
+                  events: vec![Event::Jump(Rc::from(next.name().as_str()))],
                 });
               }
               Dialog::Choicer(_) => {
@@ -439,7 +653,7 @@ impl Graph {
             }
           }
 
-          dialogs.push((name.clone(), dialog));
+          dialogs.push((name.as_str().into(), dialog));
         }
         Node::Choicer {
           id,
@@ -453,8 +667,8 @@ impl Graph {
             match self.follow(*output) {
               Some(next) => {
                 valid_choices.push(DialogNode {
-                  label: option.clone(),
-                  events: vec![Event::Jump(next.name().clone())],
+                  label: Rc::from(option.as_str()),
+                  events: vec![Event::Jump(Rc::from(next.name().as_str()))],
                 });
                 queue.push_back(next);
               }
@@ -463,7 +677,7 @@ impl Graph {
               }
             }
           }
-          dialogs.push((name.clone(), Dialog::Choicer(valid_choices)));
+          dialogs.push((name.as_str().into(), Dialog::Choicer(valid_choices)));
         }
       }
     }
