@@ -674,6 +674,7 @@ impl Layout {
   ) {
     ctx.model.load_saved_parameters();
     ctx.animator.clear_parameters();
+    ctx.animator.clear_motion();
 
     match start_point {
       Some((name, entries)) => {
