@@ -133,6 +133,8 @@ enum PlayerState {
 
 pub struct DialogPlayer {
   initial_dialog: DialogEntryPoint,
+  initial_dialog_name: Rc<str>,
+  current_dialog_name: Rc<str>,
   state: PlayerState,
   current_node_idx: usize,
   iter: Option<DialogIter>,
@@ -140,8 +142,10 @@ pub struct DialogPlayer {
 }
 
 impl DialogPlayer {
-  pub fn new(initial_dialog: DialogEntryPoint) -> Self {
+  pub fn new(initial_dialog_name: Rc<str>, initial_dialog: DialogEntryPoint) -> Self {
     Self {
+      current_dialog_name: initial_dialog_name.clone(),
+      initial_dialog_name,
       initial_dialog,
       iter: None,
       current_node_idx: 0,
@@ -151,7 +155,7 @@ impl DialogPlayer {
   }
 
   pub fn current_node_index(&self) -> Option<usize> {
-    if matches!(self.state, PlayerState::Finished) {
+    if !self.is_playing() {
       return None;
     }
 
@@ -160,6 +164,14 @@ impl DialogPlayer {
 
   pub fn is_playing(&self) -> bool {
     !matches!(self.state, PlayerState::Finished)
+  }
+
+  pub fn current_dialog_name(&self) -> Option<&Rc<str>> {
+    if !self.is_playing() {
+      return None;
+    }
+
+    Some(&self.current_dialog_name)
   }
 
   pub fn skip(
@@ -249,6 +261,7 @@ impl DialogPlayer {
   }
 
   pub fn play(&mut self) {
+    self.current_dialog_name = self.initial_dialog_name.clone();
     match &self.initial_dialog {
       DialogEntryPoint::Choicer(choices) => {
         self.state = PlayerState::WaitingChoice(choices.clone());
@@ -375,7 +388,7 @@ impl DialogPlayer {
           continue;
         }
         Event::Jump(id) => {
-          // self.current_id = id.to_string();
+          self.current_dialog_name = id.clone();
           match dialog_mgr.build(id) {
             Some(entry_point) => match entry_point {
               DialogEntryPoint::Choicer(choices) => {

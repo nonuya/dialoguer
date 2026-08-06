@@ -346,6 +346,7 @@ impl Layout {
               self.graph.draw(
                 ui,
                 &self.node_editor,
+                ctx.dialog_player.as_ref().and_then(|p| p.current_dialog_name()),
                 |id| {
                   pending_add_id = Some(id);
                 },
@@ -774,7 +775,7 @@ impl Layout {
           reset_model();
         }
 
-        *ctx.dialog_player = Some(core::dialog::DialogPlayer::new(initial_dialog));
+        *ctx.dialog_player = Some(core::dialog::DialogPlayer::new(name.into(), initial_dialog));
         ctx.dialog_player.as_mut().unwrap().play();
         info!("Playing Conversation...");
       }

@@ -487,6 +487,7 @@ impl Graph {
     &mut self,
     ui: &Ui,
     node_editor: &EditorContext,
+    current_dialog_name: Option<&Rc<str>>,
     on_add_node: impl FnOnce(NodeId) -> (),
     on_selected_node: impl FnOnce(Option<NodeId>) -> (),
     on_deleted_node: impl FnOnce(NodeId) -> (),
@@ -540,6 +541,7 @@ impl Graph {
     self.draw_graph(
       ui,
       &node_editor,
+      current_dialog_name,
       pending_deleting,
       on_selected_node,
       on_deleted_node,
@@ -550,6 +552,7 @@ impl Graph {
     &mut self,
     ui: &Ui,
     node_editor: &EditorContext,
+    current_dialog_name: Option<&Rc<str>>,
     mut pending_deleting: Option<usize>,
     on_selected_node: impl FnOnce(Option<NodeId>) -> (),
     on_deleted_node: impl FnOnce(NodeId) -> (),
@@ -580,7 +583,7 @@ impl Graph {
           name,
           input,
           output,
-          position,
+          ..
         } => {
           editor.node(*id, |node| {
             node.pin(*input, PinKind::Input, |_pin| {
@@ -600,7 +603,7 @@ impl Graph {
           options,
           input,
           outputs,
-          position,
+          ..
         } => {
           editor.node(*id, |node| {
             node.pin(*input, PinKind::Input, |_pin| {
@@ -727,6 +730,12 @@ impl Graph {
     if self.selected_node_id != current_selection {
       self.selected_node_id = current_selection;
       on_selected_node(current_selection);
+    }
+
+    if let Some(name) = current_dialog_name {
+      if let Some(node) = self.nodes.iter().find(|n| n.name() == name.as_ref()) {
+        editor.select_node(node.id());
+      }
     }
 
     editor.end();
