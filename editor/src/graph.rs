@@ -11,6 +11,8 @@ use log::warn;
 pub struct Graph {
   nodes: Vec<Node>,
   links: Vec<Link>,
+  flow_links: Vec<Link>,
+  flow_link_editing: bool,
   id_gen: IdGen,
   selected_node_id: Option<NodeId>,
   first_frame: bool,
@@ -114,7 +116,7 @@ impl Graph {
   ) -> (HashMap<NodeId, crate::timeline::Timeline>, Self) {
     let mut id_gen = IdGen::new();
     let (timelines, mut nodes, info_by_id) = Self::create_nodes(dialog_mgr, &mut id_gen);
-    let links = Self::create_links(dialog_mgr, &mut id_gen, info_by_id);
+    let (links, flow_links) = Self::create_links(dialog_mgr, &mut id_gen, info_by_id);
 
     let pin_to_node = Self::pin_to_node(&nodes);
     let groups = Self::connected_components(&nodes, &links, &pin_to_node);
@@ -129,7 +131,9 @@ impl Graph {
       timelines,
       Self {
         selected_node_id: None,
+        flow_link_editing: false,
         nodes,
+        flow_links,
         links,
         id_gen,
         first_frame: true,
@@ -204,10 +208,11 @@ impl Graph {
     dialog_mgr: &core::dialog::DialogManager,
     id_gen: &mut IdGen,
     info_by_id: HashMap<Rc<str>, NodeInfo>,
-  ) -> Vec<Link> {
+  ) -> (Vec<Link>, Vec<Link>) {
     use core::dialog::{Dialog, Event};
 
     let mut links = Vec::new();
+    let mut flow_links = Vec::new();
 
     for (name, dialog) in dialog_mgr.get_dialogs() {
       let dialog_nodes: &Vec<core::dialog::DialogNode> = match dialog {
@@ -222,8 +227,8 @@ impl Graph {
         };
 
         for event in &dialog_node.events {
-          if let Event::Jump(target_id) = event {
-            match info_by_id.get(target_id) {
+          match event {
+            Event::Jump(target_id) => match info_by_id.get(target_id) {
               Some(target_info) => {
                 links.push(Link {
                   id: id_gen.next_link(),
@@ -234,13 +239,26 @@ impl Graph {
               None => {
                 warn!("Jump apunta a ID inexistente {target_id}");
               }
-            }
+            },
+            Event::SetMainChoicer(target_id) => match info_by_id.get(target_id) {
+              Some(target_info) => {
+                flow_links.push(Link {
+                  id: id_gen.next_link(),
+                  from,
+                  to: target_info.input,
+                });
+              }
+              None => {
+                warn!("SetMainChoicer apunta a ID inexistente {target_id}");
+              }
+            },
+            _ => {}
           }
         }
       }
     }
 
-    links
+    (links, flow_links)
   }
 
   fn pin_to_node(nodes: &Vec<Node>) -> HashMap<PinId, NodeId> {
@@ -385,7 +403,7 @@ impl Graph {
     const DY: f32 = 40.0;
     const MAX_DEPTH_PER_BAND: usize = 10;
     const BAND_GAP: f32 = 30.0;
-    const GRAPH_GAP: f32 = 100.0;
+    const GRAPH_GAP: f32 = 30.0;
 
     let mut height_per_local_depth = HashMap::<usize, f32>::new();
     let mut max_band = 0;
@@ -402,9 +420,7 @@ impl Graph {
       let node = nodes.iter_mut().find(|n| n.id() == *id).unwrap();
 
       let extra_y = match node {
-        Node::Choicer { options, .. } => {
-          options.len() as f32 * 30.0
-        }
+        Node::Choicer { options, .. } => options.len() as f32 * 30.0,
         _ => 0.0,
       };
 
@@ -475,40 +491,50 @@ impl Graph {
     on_selected_node: impl FnOnce(Option<NodeId>) -> (),
     on_deleted_node: impl FnOnce(NodeId) -> (),
   ) {
-    if ui.button("Add Conversation (Z)") || (ui.io().key_alt() && ui.is_key_pressed(Key::Z)) {
-      on_add_node(self.add_conversation(format!("Conversation {}", self.id_gen.0)));
-    }
-    ui.same_line();
-    if ui.button("Add Choicer (X)") || (ui.io().key_alt() && ui.is_key_pressed(Key::X)) {
-      self.add_choicer(format!("Choicer {}", self.id_gen.0));
-    }
-
     let mut pending_deleting = None;
 
-    if let Some(id) = self.selected_node_id {
+    if !self.flow_link_editing {
+      if ui.button("Add Conversation (Z)") || (ui.io().key_alt() && ui.is_key_pressed(Key::Z)) {
+        on_add_node(self.add_conversation(format!("Conversation {}", self.id_gen.0)));
+      }
       ui.same_line();
+      if ui.button("Add Choicer (X)") || (ui.io().key_alt() && ui.is_key_pressed(Key::X)) {
+        self.add_choicer(format!("Choicer {}", self.id_gen.0));
+      }
 
-      if ui.button("(D)elete") || (ui.io().key_alt() && ui.is_key_pressed(Key::D)) {
-        if let Some(index) = self.nodes.iter().position(|n| n.id() == id) {
-          let pins: Vec<PinId> = match &self.nodes[index] {
-            Node::Conversation { input, output, .. } => {
-              vec![*input, *output]
-            }
-            Node::Choicer { input, outputs, .. } => {
-              let mut pins = Vec::with_capacity(outputs.len() + 1);
-              pins.push(*input);
-              pins.extend(outputs.iter().copied());
-              pins
-            }
-          };
+      if let Some(id) = self.selected_node_id {
+        ui.same_line();
 
-          self
-            .links
-            .retain(|link| !pins.contains(&link.from) && !pins.contains(&link.to));
+        if ui.button("(D)elete") || (ui.io().key_alt() && ui.is_key_pressed(Key::D)) {
+          if let Some(index) = self.nodes.iter().position(|n| n.id() == id) {
+            let pins: Vec<PinId> = match &self.nodes[index] {
+              Node::Conversation { input, output, .. } => {
+                vec![*input, *output]
+              }
+              Node::Choicer { input, outputs, .. } => {
+                let mut pins = Vec::with_capacity(outputs.len() + 1);
+                pins.push(*input);
+                pins.extend(outputs.iter().copied());
+                pins
+              }
+            };
 
-          pending_deleting = Some(index);
+            self
+              .links
+              .retain(|link| !pins.contains(&link.from) && !pins.contains(&link.to));
+
+            pending_deleting = Some(index);
+          }
         }
       }
+
+      ui.same_line();
+      ui.separator_vertical();
+    }
+
+    ui.same_line();
+    if ui.button(if !self.flow_link_editing {"Toggle Flow Link"} else {"Toggle Link"}) {
+      self.flow_link_editing = !self.flow_link_editing;
     }
 
     self.draw_graph(
@@ -608,7 +634,14 @@ impl Graph {
 
     // --- Dibujar links existentes ---
     for link in &self.links {
-      editor.link_colored(link.id, link.from, link.to, [0.37, 0.72, 0.95, 1.0], 2.5);
+      let alpha = if self.flow_link_editing { 0.2 } else { 1.0 };
+      editor.link_colored(link.id, link.from, link.to, [0.37, 0.72, 0.95, alpha], 2.5);
+    }
+
+    // --- Dibujar flow links existentes ---
+    for link in &self.flow_links {
+      let alpha = if !self.flow_link_editing { 0.3 } else { 1.0 };
+      editor.link_colored(link.id, link.from, link.to, [1.0, 0.0, 0.0, alpha], 2.5);
     }
 
     // --- Eliminar opción pendiente (botón X) ---
@@ -619,7 +652,13 @@ impl Graph {
       {
         let pin = outputs.remove(option_idx);
         options.remove(option_idx);
-        self.links.retain(|link| link.from != pin && link.to != pin);
+        if self.flow_link_editing {
+          self
+            .flow_links
+            .retain(|link| link.from != pin && link.to != pin);
+        } else {
+          self.links.retain(|link| link.from != pin && link.to != pin);
+        }
       }
     }
 
@@ -630,12 +669,21 @@ impl Graph {
           if create.accept_new_item() {
             // Un pin de salida solo puede tener un link activo: si ya
             // existía uno desde ese `from`, lo reemplaza.
-            self.links.retain(|link| link.from != from);
-            self.links.push(Link {
-              id: self.id_gen.next_link(),
-              from,
-              to,
-            });
+            if self.flow_link_editing {
+              self.flow_links.retain(|link| link.from != from);
+              self.flow_links.push(Link {
+                id: self.id_gen.next_link(),
+                from,
+                to,
+              });
+            } else {
+              self.links.retain(|link| link.from != from);
+              self.links.push(Link {
+                id: self.id_gen.next_link(),
+                from,
+                to,
+              });
+            }
           }
         } else {
           create.reject_new_item();
@@ -647,7 +695,11 @@ impl Graph {
     if let Some(delete) = editor.begin_delete() {
       while let Some((link_id, _, _)) = delete.query_deleted_link() {
         if delete.accept_deleted_item(true) {
-          self.links.retain(|link| link.id != link_id);
+          if self.flow_link_editing {
+            self.flow_links.retain(|link| link.id != link_id);
+          } else {
+            self.links.retain(|link| link.id != link_id);
+          }
         }
       }
       while delete.query_deleted_node().is_some() {
@@ -723,10 +775,6 @@ impl Graph {
     }
   }
 
-  pub fn get_node_names(&self) -> Vec<&String> {
-    self.nodes.iter().map(|n| n.name()).collect()
-  }
-
   pub fn export_to_dialog(
     &self,
     id: NodeId,
@@ -753,21 +801,34 @@ impl Graph {
         Node::Conversation {
           id,
           name,
-          input,
           output,
-          position,
+          ..
         } => {
           let timeline = timelines.get(id).context("Failed to get Timeline")?;
           let mut dialog = timeline.export_to_dialog();
+
+          // Si tiene un nodo de salida
           if let Some(next) = self.follow(*output) {
             queue.push_back(next);
             match &mut dialog {
               Dialog::Conversation(nodes) => {
                 nodes.push(DialogNode {
                   label: "Player".into(),
-                  events: vec![Event::Jump(Rc::from(next.name().as_str()))],
+                  events: vec![Event::Jump(next.name().as_str().into())],
                 });
               }
+              Dialog::Choicer(_) => {
+                unreachable!();
+              }
+            }
+          }
+
+          // Si tiene un flow nodo de salida
+          if let Some(next) = self.flow_follow(*output) {
+            match &mut dialog {
+              Dialog::Conversation(nodes) => {
+                nodes.get_mut(0).context("Empty node")?.events.insert(0, Event::SetMainChoicer(next.name().as_str().into()));
+              },
               Dialog::Choicer(_) => {
                 unreachable!();
               }
@@ -777,12 +838,10 @@ impl Graph {
           dialogs.push((name.as_str().into(), dialog));
         }
         Node::Choicer {
-          id,
           name,
           options,
-          input,
           outputs,
-          position,
+          ..
         } => {
           let mut valid_choices: Vec<DialogNode> = Vec::new();
           for (option, output) in options.iter().zip(outputs) {
@@ -809,6 +868,15 @@ impl Graph {
 
   fn follow(&self, output: PinId) -> Option<&Node> {
     let to = self.links.iter().find(|link| link.from == output)?.to;
+
+    self.nodes.iter().find(|node| match node {
+      Node::Conversation { input, .. } => *input == to,
+      Node::Choicer { input, .. } => *input == to,
+    })
+  }
+
+  fn flow_follow(&self, output: PinId) -> Option<&Node> {
+    let to = self.flow_links.iter().find(|link| link.from == output)?.to;
 
     self.nodes.iter().find(|node| match node {
       Node::Conversation { input, .. } => *input == to,

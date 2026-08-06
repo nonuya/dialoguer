@@ -202,12 +202,6 @@ impl Animator {
     // Otros ajustes de parametros
     model.update_parameters();
   }
-
-  pub fn motion_names(&self) -> Vec<&Rc<str>> {
-    let mut names: Vec<_> = self.map.keys().collect(); 
-    names.sort();
-    names
-  }
 }
 
 pub struct MotionManager(HashMap<Rc<str>, Motion>);
@@ -229,12 +223,16 @@ impl MotionManager {
           .context("Failed to get Motion name")?;
         let motion = cubism::motion::Motion::from_motion3_json(&path)?;
 
-        Ok((name.to_string(), motion))
+        Ok((name.into(), motion))
       })
     .collect::<anyhow::Result<HashMap<_,_>>>()?;*/
     let motions = HashMap::new();
 
     Ok(Self(motions))
+  }
+
+  pub fn names(&self) -> Vec<&Rc<str>> {
+    self.0.keys().collect()
   }
 
   pub fn get(&self, name: &str) -> Option<&Motion> {

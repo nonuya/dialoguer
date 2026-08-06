@@ -21,7 +21,6 @@ pub struct TimelineSetBlockType {
   pub parameters: Vec<(Rc<str>, Rc<str>)>, // EnumName ValueName
   pub anim: Rc<str>,
   pub view: Rc<str>,
-  pub main_choicer: Rc<str>,
 }
 
 impl TimelineSetBlockType {
@@ -29,7 +28,6 @@ impl TimelineSetBlockType {
     self.parameters.is_empty()
       && self.view.is_empty()
       && self.anim.is_empty()
-      && self.main_choicer.is_empty()
   }
 }
 
@@ -114,12 +112,7 @@ impl Container {
           parameters,
           anim,
           view,
-          main_choicer,
         }) => {
-          if !main_choicer.is_empty() {
-            events.push(Event::SetMainChoicer(main_choicer.clone()));
-          }
-
           if !view.is_empty() {
             events.push(Event::SetView(view.clone()));
           }
@@ -211,7 +204,9 @@ impl Timeline {
             .parameters
             .push((name.clone(), "NonControl".into())),
           Event::SetView(name) => pending_set.view = name.clone(),
-          Event::SetMainChoicer(name) => pending_set.main_choicer = name.clone(),
+          Event::SetMainChoicer(_) => {
+            // Managed by Graph
+          },
           Event::SetAnim(name) => pending_set.anim = name.clone(),
           other => {
             if !pending_set.is_empty() {
