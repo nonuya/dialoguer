@@ -124,8 +124,17 @@ impl ApplicationHandler for MainWindow {
       use dear_imgui_rs::ConfigFlags;
       // Setup Dear ImGui
       let mut context = dear_imgui_rs::Context::create();
-      context.io_mut().set_config_flags(ConfigFlags::DOCKING_ENABLE);
+      context
+        .io_mut()
+        .set_config_flags(ConfigFlags::DOCKING_ENABLE);
       context.set_ini_filename(None::<String>).unwrap();
+      context
+        .fonts()
+        .add_font(&[dear_imgui_rs::FontSource::TtfData {
+          data: include_bytes!("NotoSansJP-Regular.ttf"),
+          size_pixels: None,
+          config: None,
+        }]);
 
       let mut platform = dear_imgui_winit::WinitPlatform::new(&mut context);
       platform.attach_window(&window, dear_imgui_winit::HiDpiMode::Default, &mut context);
@@ -141,7 +150,11 @@ impl ApplicationHandler for MainWindow {
       renderer.set_framebuffer_srgb_enabled(false);
       renderer.new_frame().unwrap();
 
-      match App::new(PathBuf::from("assets/models/iav_013_2"), &mut renderer, &context) {
+      match App::new(
+        PathBuf::from("assets/models/iav_013_2"),
+        &mut renderer,
+        &context,
+      ) {
         Ok(app) => self.app = Some(app),
         Err(err) => {
           error!("[Application] {:#}", err);
@@ -256,7 +269,7 @@ impl ApplicationHandler for MainWindow {
         .prepare_frame(&window, &mut imgui_state.context);
 
       let ui = imgui_state.context.frame();
-      
+
       app.update(ui.io().delta_time());
       app.draw(ui);
 
