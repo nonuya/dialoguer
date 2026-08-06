@@ -317,14 +317,20 @@ impl Layout {
             .border(true)
             .build(ui, || {
               if let Some(id) = self.selected_node_id {
-                if ui.button("Play") {
-                  match self.graph.export_to_dialog(id, &self.timelines) {
-                    Ok(dialogs) => {
-                      println!("{:#?}", dialogs);
-                      let name = self.graph.get_node_by_id(id).unwrap().name();
-                      Self::play(&mut ctx, Some((name.clone(), dialogs)));
+                if ctx.dialog_player.as_ref().is_some_and(|p| p.is_playing()) {
+                  if ui.button("Stop") {
+                    Self::play(&mut ctx, None);
+                  }
+                } else {
+                  if ui.button("Play") {
+                    match self.graph.export_to_dialog(id, &self.timelines) {
+                      Ok(dialogs) => {
+                        println!("{:#?}", dialogs);
+                        let name = self.graph.get_node_by_id(id).unwrap().name();
+                        Self::play(&mut ctx, Some((name.clone(), dialogs)));
+                      }
+                      Err(e) => warn!("[Graph] Failed to Play Node: {e}"),
                     }
-                    Err(e) => warn!("[Graph] Failed to Play Node: {e}"),
                   }
                 }
 
@@ -606,7 +612,6 @@ impl Layout {
                   parameters,
                   anim,
                   view,
-                  main_choicer,
                 }) => {
                   let mut remove_index: Option<usize> = None;
                   let mut move_index: Option<(usize, isize)> = None; // (idx, offset: -1 sube, +1 baja)
@@ -618,17 +623,6 @@ impl Layout {
                     anim,
                     "##anim_combo",
                     ctx.motion_mgr.names(),
-                    &self.unchanged,
-                    self.empty.clone(),
-                  );
-
-                  // MAIN CHOICER
-                  Self::combo_box(
-                    ui,
-                    "MainChoicer",
-                    main_choicer,
-                    "##main_choicer",
-                    self.graph.get_node_names(),
                     &self.unchanged,
                     self.empty.clone(),
                   );
@@ -763,21 +757,29 @@ impl Layout {
     ctx: &mut EditorContext,
     start_point: Option<(String, Vec<(Rc<str>, core::dialog::Dialog)>)>,
   ) {
-    ctx.model.load_saved_parameters();
-    ctx.animator.stop_timer();
-    ctx.animator.clear_parameters();
-    ctx.animator.clear_motion();
+    let mut reset_model = || {
+      info!("Resetting Model...");
+      ctx.model.load_saved_parameters();
+      ctx.animator.stop_timer();
+      ctx.animator.clear_parameters();
+      ctx.animator.clear_motion();
+    };
 
     match start_point {
       Some((name, entries)) => {
         *ctx.dialog_mgr = core::dialog::DialogManager::new_from_entries(entries);
-        *ctx.dialog_player = Some(core::dialog::DialogPlayer::new(
-          ctx.dialog_mgr.build(&name).unwrap(),
-        ));
+        let initial_dialog = ctx.dialog_mgr.build(&name).unwrap();
+
+        if !matches!(initial_dialog, core::dialog::DialogEntryPoint::Choicer(..)) {
+          reset_model();
+        }
+
+        *ctx.dialog_player = Some(core::dialog::DialogPlayer::new(initial_dialog));
         ctx.dialog_player.as_mut().unwrap().play();
         info!("Playing Conversation...");
       }
       None => {
+        reset_model();
         *ctx.dialog_player = None;
         info!("Stoping Conversation...");
       }
