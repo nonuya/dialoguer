@@ -7,6 +7,30 @@ const CONTAINER_PADDING: f32 = 6.0;
 const SELECTED_COLOR: [f32; 4] = [1.0, 1.0, 0.0, 1.0];
 const CONTAINER_SPACING: f32 = 6.0;
 
+pub enum TimelineBlockType {
+  Set(TimelineSetBlockType),
+  Text(String),
+  Wait(f32),
+  Next,
+}
+
+#[derive(Default)]
+pub struct TimelineSetBlockType {
+  pub parameters: Vec<(String, String)>, // EnumName ValueName
+  pub anim: String,
+  pub view: String,
+  pub main_choicer: String,
+}
+
+impl TimelineSetBlockType {
+  pub fn is_empty(&self) -> bool {
+    self.parameters.is_empty()
+      && self.view.is_empty()
+      && self.anim.is_empty()
+      && self.main_choicer.is_empty()
+  }
+}
+
 pub struct TimelineBlock {
   pub id: usize,
   pub value: TimelineBlockType,
@@ -61,25 +85,6 @@ impl TimelineBlock {
   }
 }
 
-pub enum TimelineBlockType {
-  Set {
-    parameters: Vec<(String, String)>, // EnumName ValueName
-    anim: String,
-  },
-  Text(String),
-  Wait(f32),
-  Next,
-}
-
-impl TimelineBlockType {
-  pub fn empty_set() -> Self {
-    TimelineBlockType::Set {
-      parameters: Vec::new(),
-      anim: String::new(),
-    }
-  }
-}
-
 pub struct Container {
   pub id: usize,
   pub name: String,
@@ -103,15 +108,33 @@ impl Container {
       match &b.value {
         TimelineBlockType::Wait(seconds) => events.push(Event::Wait(*seconds)),
         TimelineBlockType::Text(text) => events.push(Event::Text(text.clone())),
-        TimelineBlockType::Set { parameters, anim } => {
-          events.push(Event::SetAnim(anim.clone()));
+        TimelineBlockType::Set(TimelineSetBlockType {
+          parameters,
+          anim,
+          view,
+          main_choicer,
+        }) => {
+          if !main_choicer.is_empty() {
+            events.push(Event::SetMainChoicer(main_choicer.clone()));
+          }
+
+          if !view.is_empty() {
+            events.push(Event::SetView(view.clone()));
+          }
+
+          if !anim.is_empty() {
+            events.push(Event::SetAnim(anim.clone()));
+          }
+
           for p in parameters {
-            events.push(Event::SetParameter(p.0.clone(), p.1.clone()));
-          } 
-        },
-        _ => {
-          unimplemented!()
+            if p.1 == "NonControl" {
+              events.push(Event::RemoveParamater(p.0.clone()));
+            } else {
+              events.push(Event::SetParameter(p.0.clone(), p.1.clone()));
+            }
+          }
         }
+        TimelineBlockType::Next => events.push(Event::Next),
       }
     }
 
@@ -133,11 +156,13 @@ struct ContainerDragState {
   container_idx: usize,
   offset_x: f32,
   current_x: f32,
+  offset_y: f32,
+  current_y: f32,
 }
 
 pub enum Selection<'a> {
-  Container(&'a mut Container),
-  Block(usize, &'a mut TimelineBlock),
+  Container(usize, &'a mut Container), // Index, Container
+  Block(usize, &'a mut TimelineBlock), // ContainerID, Block
 }
 
 pub struct Timeline {
@@ -150,7 +175,70 @@ pub struct Timeline {
 }
 
 impl Timeline {
-  pub fn new() -> Self {
+  pub fn new(dialog_nodes: &Vec<core::dialog::DialogNode>) -> Self {
+    use core::dialog::Event;
+
+    let mut containers = Vec::new();
+    for (id, node) in dialog_nodes.iter().enumerate() {
+      let mut blocks = Vec::new();
+      let mut pending_set = TimelineSetBlockType::default();
+      let mut block_id: usize = 0;
+
+      let mut add_block = |value| {
+        blocks.push(TimelineBlock {
+          id: block_id,
+          value,
+        });
+
+        block_id += 1;
+      };
+
+      for event in &node.events {
+        match event {
+          Event::SetParameter(name, value) => {
+            pending_set.parameters.push((name.clone(), value.clone()))
+          }
+          Event::RemoveParamater(name) => pending_set
+            .parameters
+            .push((name.clone(), "NonControl".into())),
+          Event::SetView(name) => pending_set.view = name.clone(),
+          Event::SetMainChoicer(name) => pending_set.main_choicer = name.clone(),
+          Event::SetAnim(name) => pending_set.anim = name.clone(),
+          other => {
+            if !pending_set.is_empty() {
+              add_block(TimelineBlockType::Set(std::mem::take(&mut pending_set)));
+            }
+
+            let value = match other {
+              Event::Text(text) => TimelineBlockType::Text(text.clone()),
+              Event::Wait(seconds) => TimelineBlockType::Wait(*seconds),
+              Event::Next => TimelineBlockType::Next,
+              Event::Jump(..) => continue,
+              _ => unreachable!("{:#?}", other),
+            };
+
+            add_block(value);
+          }
+        }
+      }
+
+      containers.push(Container {
+        id,
+        name: node.label.clone(),
+        blocks,
+      });
+    }
+
+    Self {
+      containers,
+      drag: None,
+      container_drag: None,
+      selected_container_id: None,
+      selected_block: None,
+    }
+  }
+
+  pub fn new_empty() -> Self {
     Self {
       containers: Vec::new(),
       drag: None,
@@ -175,7 +263,7 @@ impl Timeline {
     (lefts, widths)
   }
 
-  pub fn draw(&mut self, ui: &Ui) {
+  pub fn draw(&mut self, ui: &Ui, current: Option<usize>) {
     let origin = ui.cursor_screen_pos();
     let draw_list = ui.get_window_draw_list();
 
@@ -184,11 +272,31 @@ impl Timeline {
     let mouse_released = ui.is_mouse_released(MouseButton::Left);
 
     let row_height = HEADER_HEIGHT + BLOCK_HEIGHT + CONTAINER_PADDING * 2.0;
+    let row_stride = row_height + CONTAINER_SPACING; // alto de fila + separación vertical
 
-    let (normal_lefts, widths) = self.compute_layout(origin[0]);
-    let total_width: f32 = widths.iter().sum::<f32>()
-      + CONTAINER_SPACING * widths.len().max(1) as f32
-      - CONTAINER_SPACING;
+    let avail_width = ui.content_region_avail()[0];
+
+    // widths sigue viniendo de compute_layout (ancho "natural" de cada container).
+    let (_normal_lefts, widths) = self.compute_layout(origin[0]);
+
+    // --- Layout con wrap: asigna (row, left) a cada container ---
+    let mut rows: Vec<usize> = Vec::with_capacity(widths.len());
+    let mut lefts: Vec<f32> = Vec::with_capacity(widths.len());
+    {
+      let mut cur_row = 0usize;
+      let mut cur_x = origin[0];
+      for (i, &w) in widths.iter().enumerate() {
+        // Si no es el primero de la fila y no entra, salta de fila.
+        if i > 0 && cur_x > origin[0] && cur_x + w > origin[0] + avail_width {
+          cur_row += 1;
+          cur_x = origin[0];
+        }
+        rows.push(cur_row);
+        lefts.push(cur_x);
+        cur_x += w + CONTAINER_SPACING;
+      }
+    }
+    let max_row = rows.iter().copied().max().unwrap_or(0);
 
     for container_idx in 0..self.containers.len() {
       let container_id = self.containers[container_idx].id;
@@ -199,16 +307,18 @@ impl Timeline {
         Some(d) if d.container_idx == container_idx
       );
 
-      // El container solo se "resalta" si está seleccionado Y no hay un bloque seleccionado.
       let is_container_highlighted = self.selected_block.is_none()
         && matches!(&self.selected_container_id, Some(id) if *id == container_id);
 
-      let container_left = if is_dragging_container {
-        self.container_drag.as_ref().unwrap().current_x
+      let (container_left, container_top) = if is_dragging_container {
+        let d = self.container_drag.as_ref().unwrap();
+        (d.current_x, d.current_y)
       } else {
-        normal_lefts[container_idx]
+        (
+          lefts[container_idx],
+          origin[1] + rows[container_idx] as f32 * row_stride,
+        )
       };
-      let container_top = origin[1];
 
       // --- Fondo del container ---
       draw_list
@@ -225,6 +335,8 @@ impl Timeline {
         [0.4, 0.6, 0.95, 1.0]
       } else if is_container_highlighted {
         SELECTED_COLOR
+      } else if current.is_some_and(|idx| container_idx == idx) {
+        [1.0, 0.0, 0.0, 1.0]
       } else {
         [0.05, 0.05, 0.05, 1.0]
       };
@@ -238,7 +350,7 @@ impl Timeline {
         .rounding(4.0)
         .build();
 
-      // --- Header: nombre + hitbox de drag/selección del container ---
+      // --- Header ---
       let header_button_id = format!("##container_header_{}", container_id);
       ui.set_cursor_screen_pos([container_left, container_top]);
       ui.invisible_button(&header_button_id, [container_width, HEADER_HEIGHT]);
@@ -247,7 +359,6 @@ impl Timeline {
       let header_hovered = ui.is_item_hovered();
 
       if ui.is_item_clicked() {
-        // Click en el header selecciona el container y deselecciona cualquier bloque.
         self.selected_container_id = Some(container_id);
         self.selected_block = None;
       }
@@ -257,6 +368,8 @@ impl Timeline {
           container_idx,
           offset_x: mouse_pos[0] - container_left,
           current_x: container_left,
+          offset_y: mouse_pos[1] - container_top,
+          current_y: container_top,
         });
       }
 
@@ -274,7 +387,7 @@ impl Timeline {
       let track_x = container_left + CONTAINER_PADDING;
       let track_y = container_top + HEADER_HEIGHT + CONTAINER_PADDING;
 
-      // --- Bloques dentro del container, contiguos ---
+      // --- Bloques dentro del container: siguen en línea horizontal, sin cambios ---
       let block_count = self.containers[container_idx].blocks.len();
       for block_idx in 0..block_count {
         let block_id = self.containers[container_idx].blocks[block_idx].id;
@@ -305,8 +418,6 @@ impl Timeline {
         let is_active = ui.is_item_active();
 
         if ui.is_item_clicked() {
-          // Click en un bloque lo selecciona; el container "padre" queda seleccionado
-          // (para acceso por índice) pero deja de resaltarse porque hay bloque seleccionado.
           self.selected_container_id = Some(container_id);
           self.selected_block = Some((container_id, block_id));
         }
@@ -340,30 +451,34 @@ impl Timeline {
       }
     }
 
-    // --- Actualizar posición del BLOQUE en drag ---
+    // --- Actualizar posición del BLOQUE en drag (sin cambios) ---
     if let Some(drag) = &mut self.drag {
       if mouse_dragging {
-        let track_x = normal_lefts[drag.container_idx] + CONTAINER_PADDING;
+        let track_x = lefts[drag.container_idx] + CONTAINER_PADDING;
         let container = &self.containers[drag.container_idx];
         let track_max_x = track_x + (container.blocks.len() as f32 - 1.0) * BLOCK_WIDTH;
         drag.current_x = (mouse_pos[0] - drag.offset_x).clamp(track_x, track_max_x);
       }
     }
 
-    // --- Actualizar posición del CONTAINER en drag ---
+    // --- Actualizar posición del CONTAINER en drag: ahora libre en X e Y ---
     if let Some(drag) = &mut self.container_drag {
       if mouse_dragging {
         let width = widths[drag.container_idx];
         let min_x = origin[0];
-        let max_x = origin[0] + total_width - width;
+        let max_x = origin[0] + avail_width - width;
         drag.current_x = (mouse_pos[0] - drag.offset_x).clamp(min_x, max_x);
+
+        let min_y = origin[1];
+        let max_y = origin[1] + max_row as f32 * row_stride;
+        drag.current_y = (mouse_pos[1] - drag.offset_y).clamp(min_y, max_y);
       }
     }
 
-    // --- Soltar BLOQUE: reordenar dentro del mismo container ---
+    // --- Soltar BLOQUE: sin cambios ---
     if mouse_released {
       if let Some(drag) = self.drag.take() {
-        let track_x = normal_lefts[drag.container_idx] + CONTAINER_PADDING;
+        let track_x = lefts[drag.container_idx] + CONTAINER_PADDING;
         let container = &mut self.containers[drag.container_idx];
         let relative_x = drag.current_x - track_x;
 
@@ -375,25 +490,23 @@ impl Timeline {
       }
     }
 
-    // --- Soltar CONTAINER: reordenar el Vec de containers según su posición final ---
+    // --- Soltar CONTAINER: reordenar considerando fila (Y) y columna (X) ---
     if mouse_released {
       if let Some(drag) = self.container_drag.take() {
-        let dragged_width = widths[drag.container_idx];
-        let moving_right = drag.current_x > normal_lefts[drag.container_idx];
-
-        let trigger = if moving_right {
-          drag.current_x + dragged_width
-        } else {
-          drag.current_x
-        };
+        let dragged_row = ((drag.current_y - origin[1]) / row_stride)
+          .round()
+          .clamp(0.0, max_row as f32) as usize;
+        let trigger_x = drag.current_x + widths[drag.container_idx] * 0.5;
 
         let mut target_index = 0;
         for i in 0..self.containers.len() {
           if i == drag.container_idx {
             continue;
           }
-          let center = normal_lefts[i] + widths[i] * 0.5;
-          if center < trigger {
+          let other_center_x = lefts[i] + widths[i] * 0.5;
+          let goes_before =
+            rows[i] < dragged_row || (rows[i] == dragged_row && other_center_x < trigger_x);
+          if goes_before {
             target_index += 1;
           }
         }
@@ -403,7 +516,6 @@ impl Timeline {
       }
     }
   }
-
   pub fn get_selected(&mut self) -> Option<Selection<'_>> {
     if let Some((container_id, block_id)) = self.selected_block {
       let container_idx = self.containers.iter().position(|c| c.id == container_id)?;
@@ -418,7 +530,10 @@ impl Timeline {
       ));
     } else if let Some(container_id) = self.selected_container_id {
       let container_idx = self.containers.iter().position(|c| c.id == container_id)?;
-      return Some(Selection::Container(&mut self.containers[container_idx]));
+      return Some(Selection::Container(
+        container_idx,
+        &mut self.containers[container_idx],
+      ));
     } else {
       return None;
     }
