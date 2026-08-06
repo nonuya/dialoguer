@@ -654,7 +654,7 @@ impl Layout {
                       *anim = Rc::from("");
                     }
 
-                    for anim_name in ctx.animator.motion_names() {
+                    for anim_name in ctx.motion_mgr.names() {
                       let selected = anim == anim_name;
                       if ui.selectable_config(anim_name).selected(selected).build() {
                         *anim = anim_name.clone();

@@ -108,6 +108,22 @@ impl Graph {
         unimplemented!()
       }
     }
+    let dialog = dialog_mgr.get_dialog_by_id("Phase06.1").unwrap();
+    let node = Node::Conversation {
+      id: id_gen.next_node(),
+      name: "Phase06.1".into(),
+      input: id_gen.next_pin(),
+      output: id_gen.next_pin(),
+    };
+    match dialog {
+      Dialog::Conversation(dialog_nodes) => {
+        timelines.insert(node.id(), crate::timeline::Timeline::new(dialog_nodes));
+        nodes.push(node);
+      }
+      Dialog::Choicer(dialog_nodes) => {
+        unimplemented!()
+      }
+    }
 
     (
       timelines,
