@@ -134,7 +134,7 @@ enum PlayerState {
 pub struct DialogPlayer {
   initial_dialog: DialogEntryPoint,
   state: PlayerState,
-  total: usize,
+  current_node_idx: usize,
   iter: Option<DialogIter>,
   shown: bool,
 }
@@ -143,8 +143,8 @@ impl DialogPlayer {
   pub fn new(initial_dialog: DialogEntryPoint) -> Self {
     Self {
       initial_dialog,
-      total: 0,
       iter: None,
+      current_node_idx: 0,
       state: PlayerState::Running,
       shown: false,
     }
@@ -155,13 +155,7 @@ impl DialogPlayer {
       return None;
     }
 
-    let v = self
-      .iter
-      .as_ref()
-      .and_then(|iter| Some(iter.queue.len()))
-      .unwrap_or(0);
-
-    Some(self.total - v)
+    Some(self.current_node_idx)
   }
 
   pub fn is_playing(&self) -> bool {
@@ -347,6 +341,8 @@ impl DialogPlayer {
         break;
       };
 
+      self.current_node_idx = conversation_iter.idx;
+
       match &conversation.events[*idx] {
         Event::SetMainChoicer(id) => {
           if let Some(initial_dialog) = dialog_mgr.build(id) {
@@ -439,13 +435,12 @@ impl DialogPlayer {
   }
 
   fn change_iter(&mut self, opt_iter: Option<DialogIter>) {
+    self.current_node_idx = 0;
     match opt_iter {
       Some(iter) => {
-        self.total = iter.queue.len();
         self.iter = Some(iter);
       }
       None => {
-        self.total = 0;
         self.iter = None;
       }
     }
