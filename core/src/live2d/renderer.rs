@@ -9,6 +9,8 @@ pub struct Renderer {
   fbo: glow::Framebuffer,
   texture: glow::Texture,
   gl: Rc<glow::Context>,
+  blackscreen_vao: glow::VertexArray,
+  blackscreen_vbo: glow::Buffer,
   width: u32,
   height: u32,
 }
@@ -64,6 +66,39 @@ impl Renderer {
       gl.bind_framebuffer(glow::FRAMEBUFFER, None);
     }
 
+    let (blackscreen_vao, blackscreen_vbo) = unsafe {
+      let vertices: [f32; 12] = [
+        -1.0, -1.0, 1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, 1.0,
+      ];
+
+      let vao = gl.create_vertex_array().map_err(anyhow::Error::msg)?;
+      let vbo = gl.create_buffer().map_err(anyhow::Error::msg)?;
+
+      gl.bind_vertex_array(Some(vao));
+      gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
+
+      gl.buffer_data_u8_slice(
+        glow::ARRAY_BUFFER,
+        bytemuck::cast_slice(&vertices),
+        glow::STATIC_DRAW,
+      );
+
+      gl.enable_vertex_attrib_array(0);
+      gl.vertex_attrib_pointer_f32(
+        0,
+        2,
+        glow::FLOAT,
+        false,
+        2 * std::mem::size_of::<f32>() as i32,
+        0,
+      );
+
+      gl.bind_vertex_array(None);
+      gl.bind_buffer(glow::ARRAY_BUFFER, None);
+
+      (vao, vbo)
+    };
+
     Ok(Self {
       gl,
       shaders,
@@ -71,6 +106,8 @@ impl Renderer {
       height,
       texture,
       fbo,
+      blackscreen_vao,
+      blackscreen_vbo,
     })
   }
 
@@ -83,13 +120,47 @@ impl Renderer {
     self.height = height;
   }
 
-  pub fn draw(&self, model: &Model, mvp: &glam::Mat4) {
+pub fn draw(&self, model: &Model, mvp: &glam::Mat4, alpha: f32) {
     self.draw_masks(model);
+
+    unsafe {
+      self.gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo));
+    }
     self.draw_model(model, mvp);
+    self.draw_overlay(alpha);
+
+    unsafe {
+      self.gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+    }
   }
 
   pub fn tex(&self) -> glow::Texture {
     self.texture
+  }
+
+  fn draw_overlay(&self, alpha: f32) {
+    if alpha <= 0.0 {
+      return;
+    }
+
+    unsafe {
+      self.gl.enable(glow::BLEND);
+      self.gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
+
+      self.gl.disable(glow::DEPTH_TEST);
+
+      self.gl.use_program(Some(self.shaders.black_screen.program));
+      self.gl.uniform_1_f32(self.shaders.black_screen.alpha.as_ref(), alpha);
+
+      self.gl.bind_vertex_array(Some(self.blackscreen_vao));
+      self.gl.draw_arrays(glow::TRIANGLES, 0, 6);
+
+      self.gl.bind_vertex_array(None);
+      self.gl.use_program(None);
+
+      self.gl.enable(glow::DEPTH_TEST);
+      self.gl.disable(glow::BLEND);
+    }
   }
 
   fn draw_masks(&self, model: &Model) {
@@ -215,11 +286,9 @@ impl Renderer {
     let clipping_manager = model.get_clipping_manager();
 
     unsafe {
-      self.gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo));
-
       self
         .gl
-        .viewport(10, 0, self.width as i32, self.height as i32);
+        .viewport(0, 0, self.width as i32, self.height as i32);
 
       self.gl.enable(glow::BLEND);
       self.gl.disable(glow::DEPTH_TEST);
@@ -335,10 +404,6 @@ impl Renderer {
       // model.get_mesh_by_index(drawable.index).draw(&self.gl);
       model.get_mesh_by_index(drawable.index).draw(&self.gl);
     }
-
-    unsafe {
-      self.gl.bind_framebuffer(glow::FRAMEBUFFER, None);
-    }
   }
 
   unsafe fn set_blend_mode(gl: &glow::Context, cflags: ConstantFlags) {
@@ -371,6 +436,9 @@ impl Drop for Renderer {
     unsafe {
       self.gl.delete_texture(self.texture);
       self.gl.delete_framebuffer(self.fbo);
+      self.gl.delete_buffer(self.blackscreen_vbo);
+      self.gl.delete_vertex_array(self.blackscreen_vao);
+      self.gl.delete_program(self.shaders.black_screen.program);
       self.gl.delete_program(self.shaders.setup.program);
       self.gl.delete_program(self.shaders.normal.program);
       self.gl.delete_program(self.shaders.masked.program);

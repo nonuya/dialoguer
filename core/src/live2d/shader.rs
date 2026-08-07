@@ -10,11 +10,15 @@ const FRAGMENT_SHADER_SRC_MASK: &str = include_str!("./shaders/FragShaderSrcMask
 const FRAGMENT_SHADER_SRC_MASK_INVERTED: &str =
   include_str!("./shaders/FragShaderSrcMaskInverted.frag");
 
+const VERTEX_SHADER_BLACK_SCREEN: &str = include_str!("./shaders/VertShaderBlackScreen.vert");
+const FRAGMENT_SHADER_BLACK_SCREEN: &str = include_str!("./shaders/FragShaderBlackScreen.frag");
+
 pub struct GlobalShaders {
   pub(crate) setup: Shader,
   pub(crate) normal: Shader,
   pub(crate) masked: Shader,
   pub(crate) inverted_mask: Shader,
+  pub(crate) black_screen: Shader,
 }
 
 impl GlobalShaders {
@@ -31,12 +35,14 @@ impl GlobalShaders {
       VERTEX_SHADER_SRC_MASKED,
       FRAGMENT_SHADER_SRC_MASK_INVERTED,
     )?;
+    let black_screen = create_shader_from_source(gl, VERTEX_SHADER_BLACK_SCREEN, FRAGMENT_SHADER_BLACK_SCREEN)?;
 
     Ok(Self {
       setup,
       normal,
       masked,
       inverted_mask,
+      black_screen,
     })
   }
 }
@@ -60,6 +66,7 @@ fn create_shader_from_source(
         multiply_color: gl.get_uniform_location(program, "u_multiplyColor"),
         screen_color: gl.get_uniform_location(program, "u_screenColor"),
         clip_matrix: gl.get_uniform_location(program, "u_clipMatrix"),
+        alpha: gl.get_uniform_location(program, "u_alpha"),
       }) }
 }
 
@@ -145,4 +152,5 @@ pub struct Shader {
   pub screen_color: Option<glow::UniformLocation>,
   pub clip_matrix: Option<glow::UniformLocation>,
   pub matrix: Option<glow::UniformLocation>,
+  pub alpha: Option<glow::UniformLocation>,
 }

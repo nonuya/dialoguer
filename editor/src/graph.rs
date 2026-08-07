@@ -38,7 +38,7 @@ pub enum Node {
 }
 
 impl Node {
-  fn id(&self) -> NodeId {
+  pub fn id(&self) -> NodeId {
     match self {
       Node::Conversation { id, .. } => *id,
       Node::Choicer { id, .. } => *id,
@@ -420,7 +420,7 @@ impl Graph {
       let node = nodes.iter_mut().find(|n| n.id() == *id).unwrap();
 
       let extra_y = match node {
-        Node::Choicer { options, .. } => options.len() as f32 * 30.0,
+        Node::Choicer { options, .. } => options.len() as f32 * 50.0,
         _ => 0.0,
       };
 
@@ -590,7 +590,11 @@ impl Graph {
               ui.text(" * ");
             });
             ui.same_line();
-            ui.text(name);
+            if current_dialog_name.is_some_and(|current| current.as_ref() == name) {
+              ui.text_colored([1.0, 0.8, 0.0, 1.0], name);
+            } else {
+              ui.text(name);
+            }
             ui.same_line();
             node.pin(*output, PinKind::Output, |_pin| {
               ui.text(" * ");
@@ -610,7 +614,11 @@ impl Graph {
               ui.text(" * ");
             });
             ui.same_line();
-            ui.text(name);
+            if current_dialog_name.is_some_and(|current| current.as_ref() == name) {
+              ui.text_colored([1.0, 0.8, 0.0, 1.0], name);
+            } else {
+              ui.text(name);
+            }
 
             for (idx, (opt, pin_id)) in options.iter_mut().zip(outputs.iter()).enumerate() {
               let _id = ui.push_id(pin_id.0);
@@ -732,12 +740,6 @@ impl Graph {
       on_selected_node(current_selection);
     }
 
-    if let Some(name) = current_dialog_name {
-      if let Some(node) = self.nodes.iter().find(|n| n.name() == name.as_ref()) {
-        editor.select_node(node.id());
-      }
-    }
-
     editor.end();
   }
 
@@ -782,6 +784,10 @@ impl Graph {
       (Some(PinKind::Input), Some(PinKind::Output)) => Some((b, a)),
       _ => None, // mismo tipo en ambos extremos, o pin desconocido: link inválido
     }
+  }
+
+  pub fn get_node_by_name(&self, name: &Rc<str>) -> Option<&Node> {
+    self.nodes.iter().find(|n| n.name() == name.as_ref())
   }
 
   pub fn export_to_dialog(

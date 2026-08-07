@@ -110,7 +110,7 @@ impl App {
   }
 
   pub fn draw(&mut self, ui: &mut Ui) {
-    self.model_renderer.draw(&self.model, &self.mvp);
+    self.model_renderer.draw(&self.model, &self.mvp, self.animator.blackscreen_alpha());
     
     let ctx = EditorContext {
       model: &mut self.model,

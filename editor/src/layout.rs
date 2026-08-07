@@ -346,7 +346,10 @@ impl Layout {
               self.graph.draw(
                 ui,
                 &self.node_editor,
-                ctx.dialog_player.as_ref().and_then(|p| p.current_dialog_name()),
+                ctx
+                  .dialog_player
+                  .as_ref()
+                  .and_then(|p| p.current_dialog_name()),
                 |id| {
                   pending_add_id = Some(id);
                 },
@@ -560,13 +563,19 @@ impl Layout {
             .size([0.0, 0.0])
             .flags(WindowFlags::HORIZONTAL_SCROLLBAR)
             .build(ui, || {
-              timeline.draw(
-                ui,
-                ctx
-                  .dialog_player
-                  .as_ref()
-                  .and_then(|p| p.current_node_index()),
-              );
+              let idx = ctx.dialog_player.as_ref().and_then(|p| {
+                let dialog_name = p.current_dialog_name()?;
+
+                let node = self.graph.get_node_by_name(dialog_name)?;
+
+                if node.id() == self.selected_timeline_id? {
+                  p.current_node_index()
+                } else {
+                  None
+                }
+              });
+
+              timeline.draw(ui, idx);
             });
         });
 
