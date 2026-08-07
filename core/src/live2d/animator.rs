@@ -69,6 +69,9 @@ enum FadeStatus {
   None,
 }
 
+const FADE_DURATION: f32 = 0.20;
+const FADE_STEP: f32 = 2.0 / FADE_DURATION;
+
 pub struct Animator {
   motion: Option<Motion>,
   fade_status: FadeStatus,
@@ -94,7 +97,7 @@ impl Animator {
 
   pub fn play_motion(&mut self, motion: Motion) {
     self.fade_status = FadeStatus::FadeIn(motion);
-    self.set_timer(0.3);
+    self.set_timer(FADE_DURATION / 2.0);
     self.blackscreen_alpha = 0.0;
   }
 
@@ -225,14 +228,12 @@ impl Animator {
     // Otros ajustes de parametros
     model.update_parameters();
 
-    const FADE_VELOCITY: f32 = 8.0;
-
     match std::mem::replace(&mut self.fade_status, FadeStatus::None) {
       FadeStatus::FadeIn(motion) => {
-        self.blackscreen_alpha += FADE_VELOCITY * deltatime;
+        self.blackscreen_alpha += FADE_STEP * deltatime;
 
         if self.blackscreen_alpha >= 1.0 {
-          self.blackscreen_alpha = 1.5; // Little delay for update motion
+          self.blackscreen_alpha = 1.0 + FADE_DURATION * 0.2; // Little delay for update motion
           self.fade_status = FadeStatus::FadeOut;
           self.set_motion(motion);
         } else {
@@ -240,7 +241,7 @@ impl Animator {
         }
       }
       FadeStatus::FadeOut => {
-        self.blackscreen_alpha -= FADE_VELOCITY * deltatime;
+        self.blackscreen_alpha -= FADE_STEP * deltatime;
         if self.blackscreen_alpha <= 0.0 {
           self.blackscreen_alpha = 0.0;
           self.fade_status = FadeStatus::None;
