@@ -22,7 +22,7 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowAttributes};
 
 fn window_attributes() -> WindowAttributes {
-  Window::default_attributes().with_title("IVAV")
+  Window::default_attributes().with_title("Dialoguer Editor")
 }
 
 fn main() -> anyhow::Result<()> {

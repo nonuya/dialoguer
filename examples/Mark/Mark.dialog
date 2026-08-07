@@ -1,0 +1,8 @@
+[Conversation]
+Player:
+  Hello
+NPC:
+  Hi!
+  @wait 2
+  How are you?
+===
