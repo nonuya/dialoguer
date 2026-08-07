@@ -2,6 +2,7 @@ use anyhow::Context;
 use chumsky::Parser;
 use dear_imgui_glow::GlowRenderer;
 use dear_imgui_rs::*;
+use core::renderer::RenderContext;
 use std::{
   fs::{self, File},
   path::PathBuf,
@@ -15,7 +16,7 @@ use winit::{
 use crate::layout::{EditorContext, Layout};
 
 pub struct App {
-  gl: Rc<glow::Context>,
+  ctx: Rc<RenderContext>,
   texture_id: TextureId,
   model: core::live2d::Model,
   enummap: core::live2d::animator::EnumMap,
@@ -58,18 +59,20 @@ impl App {
     enummap_path.set_extension("map");
     let enummap = core::live2d::animator::load_enum_map(&enummap_path)?;
 
+    let ctx = Rc::from(core::renderer::RenderContext::from_gl(gl));
+
     let model_renderer = core::renderer::ModelRenderer::new(
-      gl.clone(),
+      ctx.clone(),
       core::live2d::config::MODEL_WIDTH,
       core::live2d::config::MODEL_HEIGHT,
     )
     .context("Failed to create Live2D Renderer")?;
     let texture_target = core::renderer::TextureTarget::new(
-      gl.clone(),
+      ctx.clone(),
       core::live2d::config::MODEL_WIDTH,
       core::live2d::config::MODEL_HEIGHT,
     )?;
-    let blackscreen_renderer = core::renderer::BlackScreenRenderer::new(gl.clone())?;
+    let blackscreen_renderer = core::renderer::BlackScreenRenderer::new(ctx.clone())?;
 
     let texture_id = TextureId::new(1000);
     renderer
@@ -94,7 +97,7 @@ impl App {
       .context("Failed to create DialogManager")?;
 
     Ok(Self {
-      gl,
+      ctx,
       texture_id,
       model,
       enummap,
@@ -124,9 +127,8 @@ impl App {
   }
 
   pub fn draw(&mut self, ui: &mut Ui) {
-    self.model_renderer.draw_masks(&self.model);
     self.texture_target.draw(|| {
-      self.model_renderer.draw_model(&self.model, &self.mvp);
+      self.model_renderer.draw(&self.model, &self.mvp);
       self.blackscreen_renderer.draw(self.animator.blackscreen_alpha());
     });
 

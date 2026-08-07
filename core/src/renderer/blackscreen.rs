@@ -1,4 +1,4 @@
-use crate::renderer::shader::create_program_from_source;
+use crate::renderer::{RenderContext, shader::create_program_from_source};
 use glow::HasContext;
 use std::rc::Rc;
 
@@ -12,34 +12,36 @@ struct Shader {
 }
 
 fn create_shader_from_source(
-  gl: &glow::Context,
+  ctx: &RenderContext,
   vertex_src: &str,
   fragment_src: &str,
 ) -> anyhow::Result<Shader> {
-  let program = create_program_from_source(gl, vertex_src, fragment_src)?;
+  let program = create_program_from_source(ctx.get_context(), vertex_src, fragment_src)?;
 
   unsafe {
     Ok(Shader {
       program,
-      alpha: gl.get_uniform_location(program, "u_alpha"),
+      alpha: ctx.get_context().get_uniform_location(program, "u_alpha"),
     })
   }
 }
 
 pub struct BlackScreenRenderer {
-  gl: Rc<glow::Context>,
+  ctx: Rc<RenderContext>,
   shader: Shader,
   vao: glow::VertexArray,
   vbo: glow::Buffer,
 }
 
 impl BlackScreenRenderer {
-  pub fn new(gl: Rc<glow::Context>) -> anyhow::Result<Self> {
+  pub fn new(ctx: Rc<RenderContext>) -> anyhow::Result<Self> {
     let shader = create_shader_from_source(
-      &gl,
+      &ctx,
       VERTEX_SHADER_BLACK_SCREEN,
       FRAGMENT_SHADER_BLACK_SCREEN,
     )?;
+
+    let gl = ctx.get_context();
 
     let (vao, vbo) = unsafe {
       let vertices: [f32; 12] = [
@@ -75,7 +77,7 @@ impl BlackScreenRenderer {
     };
 
     Ok(Self {
-      gl,
+      ctx,
       vao,
       vbo,
       shader,
@@ -87,37 +89,36 @@ impl BlackScreenRenderer {
       return;
     }
 
+    let gl = self.ctx.get_context();
+
     unsafe {
-      self.gl.enable(glow::BLEND);
-      self
-        .gl
-        .blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
+      gl.enable(glow::BLEND);
+      gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
 
-      self.gl.disable(glow::DEPTH_TEST);
+      gl.disable(glow::DEPTH_TEST);
 
-      self.gl.use_program(Some(self.shader.program));
-      self
-        .gl
-        .uniform_1_f32(self.shader.alpha.as_ref(), alpha);
+      gl.use_program(Some(self.shader.program));
+      gl.uniform_1_f32(self.shader.alpha.as_ref(), alpha);
 
-      self.gl.bind_vertex_array(Some(self.vao));
-      self.gl.draw_arrays(glow::TRIANGLES, 0, 6);
+      gl.bind_vertex_array(Some(self.vao));
+      gl.draw_arrays(glow::TRIANGLES, 0, 6);
 
-      self.gl.bind_vertex_array(None);
-      self.gl.use_program(None);
+      gl.bind_vertex_array(None);
+      gl.use_program(None);
 
-      self.gl.enable(glow::DEPTH_TEST);
-      self.gl.disable(glow::BLEND);
+      gl.enable(glow::DEPTH_TEST);
+      gl.disable(glow::BLEND);
     }
   }
 }
 
 impl Drop for BlackScreenRenderer {
   fn drop(&mut self) {
+    let gl = self.ctx.get_context();
     unsafe {
-      self.gl.delete_buffer(self.vbo);
-      self.gl.delete_program(self.shader.program);
-      self.gl.delete_vertex_array(self.vao);
+      gl.delete_buffer(self.vbo);
+      gl.delete_program(self.shader.program);
+      gl.delete_vertex_array(self.vao);
     }
   }
 }

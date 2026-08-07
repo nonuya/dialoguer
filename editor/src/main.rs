@@ -151,7 +151,7 @@ impl ApplicationHandler for MainWindow {
       renderer.new_frame().unwrap();
 
       match App::new(
-        PathBuf::from("assets/models/iav_013_2"),
+        PathBuf::from("examples/Mark/"),
         &mut renderer,
         &context,
       ) {

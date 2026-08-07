@@ -1,3 +1,4 @@
+use crate::renderer::RenderContext;
 use crate::renderer::shader::create_program_from_source;
 use crate::live2d::{Model, config};
 use cubism::core::{ConstantFlags, DynamicFlags};
@@ -81,38 +82,42 @@ impl ModelShaders {
 
 pub struct ModelRenderer {
   shaders: ModelShaders,
-  gl: Rc<glow::Context>,
+  ctx: Rc<RenderContext>,
   width: u32,
   height: u32,
 }
 
 impl ModelRenderer {
-  pub fn new(gl: Rc<glow::Context>, width: u32, height: u32) -> anyhow::Result<Self> {
-    let shaders = ModelShaders::new(&gl)?;
+  pub fn new(ctx: Rc<RenderContext>, width: u32, height: u32) -> anyhow::Result<Self> {
+    let shaders = ModelShaders::new(ctx.get_context())?;
 
     Ok(Self {
-      gl,
+      ctx,
       shaders,
       width,
       height
     })
   }
 
-  pub fn draw_masks(&self, model: &Model) {
+  pub fn draw(&self, model: &Model, mvp: &glam::Mat4) {
+    self.draw_masks(model);
+    self.draw_model(model, mvp);
+  }
+
+  fn draw_masks(&self, model: &Model) {
     let clipping_manager = model.get_clipping_manager();
+    let gl = self.ctx.get_context();
 
     unsafe {
-      self.gl.disable(glow::DEPTH_TEST);
-      self.gl.disable(glow::CULL_FACE);
+      gl.disable(glow::DEPTH_TEST);
+      gl.disable(glow::CULL_FACE);
 
-      self.gl.enable(glow::BLEND);
+      gl.enable(glow::BLEND);
 
       // MASK_BLENDING
-      self
-        .gl
-        .blend_equation_separate(glow::FUNC_ADD, glow::FUNC_ADD);
+      gl.blend_equation_separate(glow::FUNC_ADD, glow::FUNC_ADD);
 
-      self.gl.blend_func_separate(
+      gl.blend_func_separate(
         glow::ZERO,
         glow::ONE_MINUS_SRC_COLOR,
         glow::ZERO,
@@ -122,17 +127,13 @@ impl ModelRenderer {
 
     // limpiar todos los framebuffers de máscara
     for offscreen in clipping_manager.get_offscreens() {
+      let _fbo = self.ctx.push_framebuffer(Some(offscreen.framebuffer));
+
       unsafe {
-        self
-          .gl
-          .bind_framebuffer(glow::FRAMEBUFFER, Some(offscreen.framebuffer));
+        gl.viewport(0, 0, config::MASK_SIZE as i32, config::MASK_SIZE as i32);
 
-        self
-          .gl
-          .viewport(0, 0, config::MASK_SIZE as i32, config::MASK_SIZE as i32);
-
-        self.gl.clear_color(1.0, 1.0, 1.0, 1.0);
-        self.gl.clear(glow::COLOR_BUFFER_BIT);
+        gl.clear_color(1.0, 1.0, 1.0, 1.0);
+        gl.clear(glow::COLOR_BUFFER_BIT);
       }
     }
 
@@ -154,34 +155,30 @@ impl ModelRenderer {
             .get_offscreen_by_idx(cc.get_offscreen_index())
             .framebuffer;
 
-          self.gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fb));
+          let _fbo = self.ctx.push_framebuffer(Some(fb));
 
-          self
-            .gl
-            .viewport(0, 0, config::MASK_SIZE as i32, config::MASK_SIZE as i32);
+          gl.viewport(0, 0, config::MASK_SIZE as i32, config::MASK_SIZE as i32);
 
           //-------------------------
           // shader
           //-------------------------
           let shader = &self.shaders.setup;
 
-          self.gl.use_program(Some(shader.program));
+          gl.use_program(Some(shader.program));
 
           //-------------------------
           // texture
           //-------------------------
-          self.gl.active_texture(glow::TEXTURE0);
+          gl.active_texture(glow::TEXTURE0);
 
-          self
-            .gl
-            .bind_texture(glow::TEXTURE_2D, Some(*model.get_texture()));
+          gl.bind_texture(glow::TEXTURE_2D, Some(*model.get_texture()));
 
-          self.gl.uniform_1_i32(shader.texture0.as_ref(), 0);
+          gl.uniform_1_i32(shader.texture0.as_ref(), 0);
 
           //-------------------------
           // uniforms
           //-------------------------
-          self.gl.uniform_matrix_4_f32_slice(
+          gl.uniform_matrix_4_f32_slice(
             shader.clip_matrix.as_ref(),
             false,
             cc.get_matrix_for_mask().as_ref(),
@@ -189,7 +186,7 @@ impl ModelRenderer {
 
           let bounds = cc.get_layout_bounds();
 
-          self.gl.uniform_4_f32(
+          gl.uniform_4_f32(
             shader.base_color.as_ref(),
             bounds.x * 2.0 - 1.0,
             bounds.y * 2.0 - 1.0,
@@ -199,38 +196,31 @@ impl ModelRenderer {
 
           let c = cc.get_color_channel();
 
-          self
-            .gl
-            .uniform_4_f32(shader.channel_flag.as_ref(), c[0], c[1], c[2], c[3]);
+          gl.uniform_4_f32(shader.channel_flag.as_ref(), c[0], c[1], c[2], c[3]);
 
-          self
-            .gl
-            .uniform_4_f32(shader.multiply_color.as_ref(), 1.0, 1.0, 1.0, 1.0);
+          gl.uniform_4_f32(shader.multiply_color.as_ref(), 1.0, 1.0, 1.0, 1.0);
 
-          self
-            .gl
-            .uniform_4_f32(shader.screen_color.as_ref(), 0.0, 0.0, 0.0, 0.0);
+          gl.uniform_4_f32(shader.screen_color.as_ref(), 0.0, 0.0, 0.0, 0.0);
 
-          model.get_mesh_by_index(draw_index).draw(&self.gl);
+          model.get_mesh_by_index(draw_index).draw(gl);
         }
       }
     }
   }
 
-  pub fn draw_model(&self, model: &Model, mvp: &glam::Mat4) {
+  fn draw_model(&self, model: &Model, mvp: &glam::Mat4) {
     let clipping_manager = model.get_clipping_manager();
+    let gl = self.ctx.get_context();
 
     unsafe {
-      self
-        .gl
-        .viewport(0, 0, self.width as i32, self.height as i32);
+      gl.viewport(0, 0, self.width as i32, self.height as i32);
 
-      self.gl.enable(glow::BLEND);
-      self.gl.disable(glow::DEPTH_TEST);
-      self.gl.disable(glow::CULL_FACE);
+      gl.enable(glow::BLEND);
+      gl.disable(glow::DEPTH_TEST);
+      gl.disable(glow::CULL_FACE);
 
-      self.gl.clear_color(0.0, 0.0, 0.0, 0.0);
-      self.gl.clear(glow::COLOR_BUFFER_BIT);
+      gl.clear_color(0.0, 0.0, 0.0, 0.0);
+      gl.clear(glow::COLOR_BUFFER_BIT);
     }
 
     for drawable in model.get_sorted_drawables() {
@@ -266,32 +256,24 @@ impl ModelRenderer {
       // Blend
       //----------------------------------
       unsafe {
-        Self::set_blend_mode(&self.gl, cflags);
+        Self::set_blend_mode(gl, cflags);
       }
 
       //----------------------------------
       // Program
       //----------------------------------
       unsafe {
-        self.gl.use_program(Some(shader.program));
+        gl.use_program(Some(shader.program));
 
-        self
-          .gl
-          .uniform_matrix_4_f32_slice(shader.matrix.as_ref(), false, mvp.as_ref());
+        gl.uniform_matrix_4_f32_slice(shader.matrix.as_ref(), false, mvp.as_ref());
 
-        self
-          .gl
-          .uniform_4_f32(shader.base_color.as_ref(), 1.0, 1.0, 1.0, drawable.opacity);
+        gl.uniform_4_f32(shader.base_color.as_ref(), 1.0, 1.0, 1.0, drawable.opacity);
 
-        self
-          .gl
-          .uniform_4_f32(shader.multiply_color.as_ref(), 1.0, 1.0, 1.0, 1.0);
+        gl.uniform_4_f32(shader.multiply_color.as_ref(), 1.0, 1.0, 1.0, 1.0);
 
-        self
-          .gl
-          .uniform_4_f32(shader.screen_color.as_ref(), 0.0, 0.0, 0.0, 0.0);
+        gl.uniform_4_f32(shader.screen_color.as_ref(), 0.0, 0.0, 0.0, 0.0);
 
-        self.gl.uniform_4_f32(
+        gl.uniform_4_f32(
           shader.channel_flag.as_ref(),
           channel_flag[0],
           channel_flag[1],
@@ -304,13 +286,11 @@ impl ModelRenderer {
       // Textura principal
       //----------------------------------
       unsafe {
-        self.gl.active_texture(glow::TEXTURE0);
+        gl.active_texture(glow::TEXTURE0);
 
-        self
-          .gl
-          .bind_texture(glow::TEXTURE_2D, Some(*model.get_texture()));
+        gl.bind_texture(glow::TEXTURE_2D, Some(*model.get_texture()));
 
-        self.gl.uniform_1_i32(shader.texture0.as_ref(), 0);
+        gl.uniform_1_i32(shader.texture0.as_ref(), 0);
       }
 
       //----------------------------------
@@ -319,13 +299,13 @@ impl ModelRenderer {
 
       if let Some(mask) = mask_texture {
         unsafe {
-          self.gl.active_texture(glow::TEXTURE1);
+          gl.active_texture(glow::TEXTURE1);
 
-          self.gl.bind_texture(glow::TEXTURE_2D, Some(mask.texture));
+          gl.bind_texture(glow::TEXTURE_2D, Some(mask.texture));
 
-          self.gl.uniform_1_i32(shader.texture1.as_ref(), 1);
+          gl.uniform_1_i32(shader.texture1.as_ref(), 1);
 
-          self.gl.uniform_matrix_4_f32_slice(
+          gl.uniform_matrix_4_f32_slice(
             shader.clip_matrix.as_ref(),
             false,
             clip_matrix.unwrap().as_ref(),
@@ -336,8 +316,7 @@ impl ModelRenderer {
       //----------------------------------
       // Draw
       //----------------------------------
-      // model.get_mesh_by_index(drawable.index).draw(&self.gl);
-      model.get_mesh_by_index(drawable.index).draw(&self.gl);
+      model.get_mesh_by_index(drawable.index).draw(gl);
     }
   }
 
@@ -368,11 +347,12 @@ impl ModelRenderer {
 
 impl Drop for ModelRenderer {
   fn drop(&mut self) {
+    let gl = self.ctx.get_context();
     unsafe {
-      self.gl.delete_program(self.shaders.setup.program);
-      self.gl.delete_program(self.shaders.normal.program);
-      self.gl.delete_program(self.shaders.masked.program);
-      self.gl.delete_program(self.shaders.inverted_mask.program);
+      gl.delete_program(self.shaders.setup.program);
+      gl.delete_program(self.shaders.normal.program);
+      gl.delete_program(self.shaders.masked.program);
+      gl.delete_program(self.shaders.inverted_mask.program);
     }
   }
 }

@@ -2,14 +2,17 @@ use std::rc::Rc;
 use glow::HasContext;
 use anyhow::Context;
 
+use crate::renderer::RenderContext;
+
 pub struct TextureTarget {
   fbo: glow::Framebuffer,
   texture: glow::Texture,
-  gl: Rc<glow::Context>,
+  ctx: Rc<RenderContext>,
 }
 
 impl TextureTarget {
-  pub fn new(gl: Rc<glow::Context>, width: u32, height: u32) -> anyhow::Result<Self> {
+  pub fn new(ctx: Rc<RenderContext>, width: u32, height: u32) -> anyhow::Result<Self> {
+    let gl = ctx.get_context();
     let texture = unsafe {
       gl.create_texture()
         .map_err(anyhow::Error::msg)
@@ -17,7 +20,6 @@ impl TextureTarget {
     };
 
     unsafe {
-      // 1. Crear la textura donde vas a "pintar"
       gl.bind_texture(glow::TEXTURE_2D, Some(texture));
       gl.tex_image_2d(
         glow::TEXTURE_2D,
@@ -49,31 +51,23 @@ impl TextureTarget {
         .context("Failed to create framebuffer for render Model")?
     };
     unsafe {
-      gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+      let _fbo = ctx.push_framebuffer(Some(fbo));
       gl.framebuffer_texture(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, Some(texture), 0);
 
       anyhow::ensure!(gl.check_framebuffer_status(glow::FRAMEBUFFER) == glow::FRAMEBUFFER_COMPLETE);
-
-      gl.bind_framebuffer(glow::FRAMEBUFFER, None);
     }
 
     Ok(Self {
       fbo,
       texture,
-      gl,
+      ctx,
     })
   }
 
   pub fn draw<F: Fn() -> ()>(&self, f: F) {
-    unsafe {
-      self.gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo));
-    }
+    let _fbo = self.ctx.push_framebuffer(Some(self.fbo));
 
     f();
-
-    unsafe {
-      self.gl.bind_framebuffer(glow::FRAMEBUFFER, None);
-    }
   }
 
   pub fn tex(&self) -> glow::Texture {
@@ -83,9 +77,10 @@ impl TextureTarget {
 
 impl Drop for TextureTarget {
   fn drop(&mut self) {
+    let gl = self.ctx.get_context();
     unsafe {
-      self.gl.delete_texture(self.texture);
-      self.gl.delete_framebuffer(self.fbo);
+      gl.delete_texture(self.texture);
+      gl.delete_framebuffer(self.fbo);
     }
   }
 }
