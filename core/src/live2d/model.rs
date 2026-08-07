@@ -101,7 +101,7 @@ impl Model {
     self.parameters.get(id).and_then(|&idx| Some(self.cubism.parameter_at(idx).value))
   }
 
-  pub fn get_parameters_iter(&mut self) -> ParameterIterMut {
+  pub fn get_parameters_iter_mut(&mut self) -> ParameterIterMut<'_> {
     self.cubism.model_mut().parameters_mut()
   }
 

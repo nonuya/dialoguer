@@ -148,7 +148,7 @@ impl Layout {
       });
 
     ui.window("Parameters").build(|| {
-      let mut parameters: Vec<_> = ctx.model.get_parameters_iter().collect();
+      let mut parameters: Vec<_> = ctx.model.get_parameters_iter_mut().collect();
       parameters.sort_unstable_by(|a, b| natord::compare(a.id, b.id));
       let changed = parameters.into_iter().fold(false, |acc, e| {
         acc
@@ -736,11 +736,6 @@ impl Layout {
           }
         });
       });
-  }
-
-  fn play_within_timeline(&self, timeline: &Timeline, ctx: &mut EditorContext) {
-    /*
-     */
   }
 
   fn combo_box<Opts, T>(
