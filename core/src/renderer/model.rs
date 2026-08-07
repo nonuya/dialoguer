@@ -1,169 +1,104 @@
-use crate::live2d::{Model, config, shader::GlobalShaders};
-use anyhow::Context;
+use crate::renderer::shader::create_program_from_source;
+use crate::live2d::{Model, config};
 use cubism::core::{ConstantFlags, DynamicFlags};
 use glow::HasContext;
 use std::rc::Rc;
 
-pub struct Renderer {
-  shaders: GlobalShaders,
-  fbo: glow::Framebuffer,
-  texture: glow::Texture,
+const VERTEX_SHADER_SRC_SETUP_MASK: &str = include_str!("./shaders/VertShaderSrcSetupMask.vert");
+const FRAGMENT_SHADER_SRC_SETUP_MASK: &str = include_str!("./shaders/FragShaderSrcSetupMask.frag");
+const VERTEX_SHADER_SRC: &str = include_str!("./shaders/VertShaderSrc.vert");
+const FRAGMENT_SHADER_SRC: &str = include_str!("./shaders/FragShaderSrc.frag");
+const VERTEX_SHADER_SRC_MASKED: &str = include_str!("./shaders/VertShaderSrcMasked.vert");
+const FRAGMENT_SHADER_SRC_MASK: &str = include_str!("./shaders/FragShaderSrcMask.frag");
+const FRAGMENT_SHADER_SRC_MASK_INVERTED: &str =
+  include_str!("./shaders/FragShaderSrcMaskInverted.frag");
+
+struct Shader {
+  program: glow::Program,
+
+  texture0: Option<glow::UniformLocation>,
+  texture1: Option<glow::UniformLocation>,
+  channel_flag: Option<glow::UniformLocation>,
+  base_color: Option<glow::UniformLocation>,
+  multiply_color: Option<glow::UniformLocation>,
+  screen_color: Option<glow::UniformLocation>,
+  clip_matrix: Option<glow::UniformLocation>,
+  matrix: Option<glow::UniformLocation>,
+}
+
+fn create_shader_from_source(
+  gl: &glow::Context,
+  vertex_src: &str,
+  fragment_src: &str,
+) -> anyhow::Result<Shader> {
+  let program = create_program_from_source(gl, vertex_src, fragment_src)?;
+
+  unsafe {
+    Ok(Shader {
+      program,
+      matrix: gl.get_uniform_location(program, "u_matrix"),
+      texture0: gl.get_uniform_location(program, "s_texture0"),
+      texture1: gl.get_uniform_location(program, "s_texture1"),
+      channel_flag: gl.get_uniform_location(program, "u_channelFlag"),
+      base_color: gl.get_uniform_location(program, "u_baseColor"),
+      multiply_color: gl.get_uniform_location(program, "u_multiplyColor"),
+      screen_color: gl.get_uniform_location(program, "u_screenColor"),
+      clip_matrix: gl.get_uniform_location(program, "u_clipMatrix"),
+    })
+  }
+}
+
+struct ModelShaders {
+  setup: Shader,
+  normal: Shader,
+  masked: Shader,
+  inverted_mask: Shader,
+}
+
+impl ModelShaders {
+  pub fn new(gl: &glow::Context) -> anyhow::Result<Self> {
+    let setup = create_shader_from_source(
+      gl,
+      VERTEX_SHADER_SRC_SETUP_MASK,
+      FRAGMENT_SHADER_SRC_SETUP_MASK,
+    )?;
+    let normal = create_shader_from_source(gl, VERTEX_SHADER_SRC, FRAGMENT_SHADER_SRC)?;
+    let masked = create_shader_from_source(gl, VERTEX_SHADER_SRC_MASKED, FRAGMENT_SHADER_SRC_MASK)?;
+    let inverted_mask = create_shader_from_source(
+      gl,
+      VERTEX_SHADER_SRC_MASKED,
+      FRAGMENT_SHADER_SRC_MASK_INVERTED,
+    )?;
+
+    Ok(Self {
+      setup,
+      normal,
+      masked,
+      inverted_mask,
+    })
+  }
+}
+
+pub struct ModelRenderer {
+  shaders: ModelShaders,
   gl: Rc<glow::Context>,
-  blackscreen_vao: glow::VertexArray,
-  blackscreen_vbo: glow::Buffer,
   width: u32,
   height: u32,
 }
 
-impl Renderer {
+impl ModelRenderer {
   pub fn new(gl: Rc<glow::Context>, width: u32, height: u32) -> anyhow::Result<Self> {
-    let shaders = GlobalShaders::new(&gl)?;
-
-    let texture = unsafe {
-      gl.create_texture()
-        .map_err(anyhow::Error::msg)
-        .context("Failed to create texture for render Model")?
-    };
-
-    unsafe {
-      // 1. Crear la textura donde vas a "pintar"
-      gl.bind_texture(glow::TEXTURE_2D, Some(texture));
-      gl.tex_image_2d(
-        glow::TEXTURE_2D,
-        0,
-        glow::RGBA8 as i32,
-        width as i32,
-        height as i32,
-        0,
-        glow::RGBA,
-        glow::UNSIGNED_BYTE,
-        glow::PixelUnpackData::Slice(None),
-      );
-      gl.tex_parameter_i32(
-        glow::TEXTURE_2D,
-        glow::TEXTURE_MIN_FILTER,
-        glow::LINEAR as i32,
-      );
-      gl.tex_parameter_i32(
-        glow::TEXTURE_2D,
-        glow::TEXTURE_MAG_FILTER,
-        glow::LINEAR as i32,
-      );
-      gl.bind_texture(glow::TEXTURE_2D, None);
-    }
-
-    let fbo = unsafe {
-      gl.create_framebuffer()
-        .map_err(anyhow::Error::msg)
-        .context("Failed to create framebuffer for render Model")?
-    };
-    unsafe {
-      gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
-      gl.framebuffer_texture(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, Some(texture), 0);
-
-      anyhow::ensure!(gl.check_framebuffer_status(glow::FRAMEBUFFER) == glow::FRAMEBUFFER_COMPLETE);
-
-      gl.bind_framebuffer(glow::FRAMEBUFFER, None);
-    }
-
-    let (blackscreen_vao, blackscreen_vbo) = unsafe {
-      let vertices: [f32; 12] = [
-        -1.0, -1.0, 1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, 1.0,
-      ];
-
-      let vao = gl.create_vertex_array().map_err(anyhow::Error::msg)?;
-      let vbo = gl.create_buffer().map_err(anyhow::Error::msg)?;
-
-      gl.bind_vertex_array(Some(vao));
-      gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
-
-      gl.buffer_data_u8_slice(
-        glow::ARRAY_BUFFER,
-        bytemuck::cast_slice(&vertices),
-        glow::STATIC_DRAW,
-      );
-
-      gl.enable_vertex_attrib_array(0);
-      gl.vertex_attrib_pointer_f32(
-        0,
-        2,
-        glow::FLOAT,
-        false,
-        2 * std::mem::size_of::<f32>() as i32,
-        0,
-      );
-
-      gl.bind_vertex_array(None);
-      gl.bind_buffer(glow::ARRAY_BUFFER, None);
-
-      (vao, vbo)
-    };
+    let shaders = ModelShaders::new(&gl)?;
 
     Ok(Self {
       gl,
       shaders,
       width,
-      height,
-      texture,
-      fbo,
-      blackscreen_vao,
-      blackscreen_vbo,
+      height
     })
   }
 
-  pub fn resize(&mut self, width: u32, height: u32) {
-    if width == 0 || height == 0 {
-      return;
-    }
-
-    self.width = width;
-    self.height = height;
-  }
-
-pub fn draw(&self, model: &Model, mvp: &glam::Mat4, alpha: f32) {
-    self.draw_masks(model);
-
-    unsafe {
-      self.gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo));
-    }
-    self.draw_model(model, mvp);
-    self.draw_overlay(alpha);
-
-    unsafe {
-      self.gl.bind_framebuffer(glow::FRAMEBUFFER, None);
-    }
-  }
-
-  pub fn tex(&self) -> glow::Texture {
-    self.texture
-  }
-
-  fn draw_overlay(&self, alpha: f32) {
-    if alpha <= 0.0 {
-      return;
-    }
-
-    unsafe {
-      self.gl.enable(glow::BLEND);
-      self.gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
-
-      self.gl.disable(glow::DEPTH_TEST);
-
-      self.gl.use_program(Some(self.shaders.black_screen.program));
-      self.gl.uniform_1_f32(self.shaders.black_screen.alpha.as_ref(), alpha);
-
-      self.gl.bind_vertex_array(Some(self.blackscreen_vao));
-      self.gl.draw_arrays(glow::TRIANGLES, 0, 6);
-
-      self.gl.bind_vertex_array(None);
-      self.gl.use_program(None);
-
-      self.gl.enable(glow::DEPTH_TEST);
-      self.gl.disable(glow::BLEND);
-    }
-  }
-
-  fn draw_masks(&self, model: &Model) {
+  pub fn draw_masks(&self, model: &Model) {
     let clipping_manager = model.get_clipping_manager();
 
     unsafe {
@@ -282,7 +217,7 @@ pub fn draw(&self, model: &Model, mvp: &glam::Mat4, alpha: f32) {
     }
   }
 
-  fn draw_model(&self, model: &Model, mvp: &glam::Mat4) {
+  pub fn draw_model(&self, model: &Model, mvp: &glam::Mat4) {
     let clipping_manager = model.get_clipping_manager();
 
     unsafe {
@@ -431,14 +366,9 @@ pub fn draw(&self, model: &Model, mvp: &glam::Mat4, alpha: f32) {
   }
 }
 
-impl Drop for Renderer {
+impl Drop for ModelRenderer {
   fn drop(&mut self) {
     unsafe {
-      self.gl.delete_texture(self.texture);
-      self.gl.delete_framebuffer(self.fbo);
-      self.gl.delete_buffer(self.blackscreen_vbo);
-      self.gl.delete_vertex_array(self.blackscreen_vao);
-      self.gl.delete_program(self.shaders.black_screen.program);
       self.gl.delete_program(self.shaders.setup.program);
       self.gl.delete_program(self.shaders.normal.program);
       self.gl.delete_program(self.shaders.masked.program);

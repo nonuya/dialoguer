@@ -2,7 +2,11 @@ use anyhow::Context;
 use chumsky::Parser;
 use dear_imgui_glow::GlowRenderer;
 use dear_imgui_rs::*;
-use std::{fs::{self, File}, path::PathBuf, rc::Rc};
+use std::{
+  fs::{self, File},
+  path::PathBuf,
+  rc::Rc,
+};
 use winit::{
   event::KeyEvent,
   keyboard::{KeyCode, PhysicalKey},
@@ -16,7 +20,9 @@ pub struct App {
   model: core::live2d::Model,
   enummap: core::live2d::animator::EnumMap,
   mvp: glam::Mat4,
-  model_renderer: core::live2d::Renderer,
+  model_renderer: core::renderer::ModelRenderer,
+  blackscreen_renderer: core::renderer::BlackScreenRenderer,
+  texture_target: core::renderer::TextureTarget,
   animator: core::live2d::animator::Animator,
   dialog_mgr: core::dialog::DialogManager,
   dialog_player: Option<core::dialog::DialogPlayer>,
@@ -52,17 +58,23 @@ impl App {
     enummap_path.set_extension("map");
     let enummap = core::live2d::animator::load_enum_map(&enummap_path)?;
 
-    let model_renderer = core::live2d::Renderer::new(
+    let model_renderer = core::renderer::ModelRenderer::new(
       gl.clone(),
       core::live2d::config::MODEL_WIDTH,
       core::live2d::config::MODEL_HEIGHT,
     )
     .context("Failed to create Live2D Renderer")?;
+    let texture_target = core::renderer::TextureTarget::new(
+      gl.clone(),
+      core::live2d::config::MODEL_WIDTH,
+      core::live2d::config::MODEL_HEIGHT,
+    )?;
+    let blackscreen_renderer = core::renderer::BlackScreenRenderer::new(gl.clone())?;
 
     let texture_id = TextureId::new(1000);
     renderer
       .texture_map_mut()
-      .set(texture_id, model_renderer.tex());
+      .set(texture_id, texture_target.tex());
 
     let motion_mgr = core::live2d::animator::MotionManager::new(&model_path, &model3)
       .context("Failed to read motions")?;
@@ -88,6 +100,8 @@ impl App {
       enummap,
       mvp: glam::Mat4::from_scale(glam::vec3(2.0, 2.0, 1.0)),
       model_renderer,
+      blackscreen_renderer,
+      texture_target,
       motion_mgr,
       animator: core::live2d::animator::Animator::new(),
       layout: Layout::new(imgui_context, &dialog_mgr),
@@ -110,8 +124,12 @@ impl App {
   }
 
   pub fn draw(&mut self, ui: &mut Ui) {
-    self.model_renderer.draw(&self.model, &self.mvp, self.animator.blackscreen_alpha());
-    
+    self.model_renderer.draw_masks(&self.model);
+    self.texture_target.draw(|| {
+      self.model_renderer.draw_model(&self.model, &self.mvp);
+      self.blackscreen_renderer.draw(self.animator.blackscreen_alpha());
+    });
+
     let ctx = EditorContext {
       model: &mut self.model,
       animator: &mut self.animator,
@@ -121,7 +139,6 @@ impl App {
       motion_mgr: &self.motion_mgr,
     };
     self.layout.draw(ui, ctx);
-
 
     ui.window("Preview").build(|| {
       // Put this section in comment if you wanna work with both of your hands
