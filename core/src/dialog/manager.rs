@@ -366,7 +366,7 @@ impl DialogPlayer {
           println!("{}: {}", conversation.label, text);
         }
         Event::Wait(seconds) => {
-          debug!("Waiting for {} seconds", seconds);
+          debug!("[Wait] {} seconds", seconds);
           animator.set_timer(*seconds);
         }
         Event::SetParameter(enum_type, enum_value) => {
@@ -378,11 +378,11 @@ impl DialogPlayer {
                 }
               }
               None => warn!(
-                "EnumValue '{}' doesn't exists in '{}'",
+                "[SetParameter] EnumValue '{}' doesn't exists in '{}'",
                 enum_value, enum_type
               ),
             },
-            None => warn!("EnumType '{}' doesn't exists!", enum_type),
+            None => warn!("[SetParameter] EnumType '{}' doesn't exists!", enum_type),
           }
           conversation_iter.events.pop_front();
           continue;
@@ -392,17 +392,17 @@ impl DialogPlayer {
           match dialog_mgr.build(id) {
             Some(entry_point) => match entry_point {
               DialogEntryPoint::Choicer(choices) => {
-                warn!("Jumping to Choicer '{}'", id);
+                warn!("[Jump] Choicer '{}'", id);
                 self.state = PlayerState::WaitingChoice(choices.clone());
                 break;
               }
               DialogEntryPoint::Conversation(iter) => {
-                warn!("Jumping to Conversation '{}'", id);
+                warn!("[Jump] Conversation '{}'", id);
                 next_iter = Some(iter);
                 break;
               }
             },
-            None => warn!("Failed to jumping. '{}' doesnt exists", id),
+            None => warn!("[Jump] Failed to jumping. '{}' doesnt exists", id),
           }
         }
         Event::RemoveParamater(enum_type) => {
@@ -416,25 +416,25 @@ impl DialogPlayer {
                 .unwrap();
               for p in params {
                 // FIXME: Remove &'static str
-                warn!("Removing '{}'", &p.name);
+                warn!("[RemoveParameter] Removing '{}'", &p.name);
                 animator.remove_parameter(&p.name);
               }
             }
-            None => warn!("EnumType '{}' doesn't exists!", enum_type),
+            None => warn!("[RemoveParameter] EnumType '{}' doesn't exists!", enum_type),
           }
           conversation_iter.events.pop_front();
           continue;
         }
         Event::SetAnim(name) => match motion_mgr.get(name) {
           Some(motion) => animator.play_motion(motion.clone()),
-          None => warn!("Animation '{}' not found", name),
+          None => warn!("[SetAnim] Animation '{}' not found", name),
         },
         Event::Next => {
           iter.queue.pop_front();
           break;
         }
         ev => {
-          debug!("{:#?}", ev);
+          debug!("[Unknown Event] {:#?}", ev);
         }
       }
 
