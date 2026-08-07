@@ -325,7 +325,6 @@ impl Layout {
                   if ui.button("Play") {
                     match self.graph.export_to_dialog(id, &self.timelines) {
                       Ok(dialogs) => {
-                        println!("{:#?}", dialogs);
                         let name = self.graph.get_node_by_id(id).unwrap().name();
                         Self::play(&mut ctx, Some((name.clone(), dialogs)));
                       }
@@ -428,10 +427,20 @@ impl Layout {
             }
           } else {
             if ui.button("Play Conversation") {
+              let node = self
+                .graph
+                .get_node_by_id(self.selected_timeline_id.unwrap())
+                .unwrap();
+
+              let node_name = node.name();
+
               let dialog = timeline.export_to_dialog();
               Self::play(
                 &mut ctx,
-                Some(("Initial".into(), vec![("Initial".into(), dialog)])),
+                Some((
+                  node_name.as_str().into(),
+                  vec![(node_name.as_str().into(), dialog)],
+                )),
               );
             }
           }
@@ -466,7 +475,7 @@ impl Layout {
             ui.same_line();
 
             // Selected
-            if ui.button("Play Container") {
+            if ui.button(if is_dialog_playing {"Stop"} else {"Play Container"}) {
               match selected {
                 Selection::Block {
                   container_index, ..
@@ -543,10 +552,20 @@ impl Layout {
 
           if let Some(idx) = pending_play.take() {
             info!("Skipping to Conversation with Index {idx}...");
+            let node = self
+              .graph
+              .get_node_by_id(self.selected_timeline_id.unwrap())
+              .unwrap();
+
+            let node_name = node.name();
+
             let dialog = timeline.export_to_dialog();
             Self::play(
               &mut ctx,
-              Some(("Initial".into(), vec![("Initial".into(), dialog)])),
+              Some((
+                node_name.as_str().into(),
+                vec![(node_name.as_str().into(), dialog)],
+              )),
             );
             ctx.dialog_player.as_mut().unwrap().skip(
               idx,
@@ -717,6 +736,11 @@ impl Layout {
           }
         });
       });
+  }
+
+  fn play_within_timeline(&self, timeline: &Timeline, ctx: &mut EditorContext) {
+    /*
+     */
   }
 
   fn combo_box<Opts, T>(

@@ -591,7 +591,7 @@ impl Graph {
             });
             ui.same_line();
             if current_dialog_name.is_some_and(|current| current.as_ref() == name) {
-              ui.text_colored([1.0, 0.8, 0.0, 1.0], name);
+              ui.text_colored([1.0, 0.0, 0.0, 1.0], name);
             } else {
               ui.text(name);
             }
@@ -615,7 +615,7 @@ impl Graph {
             });
             ui.same_line();
             if current_dialog_name.is_some_and(|current| current.as_ref() == name) {
-              ui.text_colored([1.0, 0.8, 0.0, 1.0], name);
+              ui.text_colored([1.0, 0.0, 0.0, 1.0], name);
             } else {
               ui.text(name);
             }

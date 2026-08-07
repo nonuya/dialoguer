@@ -242,7 +242,7 @@ impl DialogPlayer {
             None => warn!("EnumType '{}' doesn't exists!", enum_type),
           },
           Event::SetAnim(name) => match motion_mgr.get(name) {
-            Some(motion) => animator.play_motion(motion.clone()),
+            Some(motion) => animator.set_motion(motion.clone()),
             None => warn!("Animation '{}' not found", name),
           },
           _ => {}

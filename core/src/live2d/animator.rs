@@ -66,7 +66,7 @@ impl Value {
 enum FadeStatus {
   FadeIn(Motion),
   FadeOut,
-  None
+  None,
 }
 
 pub struct Animator {
@@ -94,11 +94,11 @@ impl Animator {
 
   pub fn play_motion(&mut self, motion: Motion) {
     self.fade_status = FadeStatus::FadeIn(motion);
-    self.set_timer(0.25);
+    self.set_timer(0.3);
     self.blackscreen_alpha = 0.0;
   }
 
-  fn set_motion(&mut self, mut motion: Motion) {
+  pub fn set_motion(&mut self, mut motion: Motion) {
     motion.play();
     motion.set_looped(true);
     self.stop_timer();
@@ -232,13 +232,13 @@ impl Animator {
         self.blackscreen_alpha += FADE_VELOCITY * deltatime;
 
         if self.blackscreen_alpha >= 1.0 {
-          self.blackscreen_alpha = 1.0;
+          self.blackscreen_alpha = 1.5; // Little delay for update motion
           self.fade_status = FadeStatus::FadeOut;
           self.set_motion(motion);
         } else {
           self.fade_status = FadeStatus::FadeIn(motion);
         }
-      },
+      }
       FadeStatus::FadeOut => {
         self.blackscreen_alpha -= FADE_VELOCITY * deltatime;
         if self.blackscreen_alpha <= 0.0 {
@@ -247,7 +247,7 @@ impl Animator {
         } else {
           self.fade_status = FadeStatus::FadeOut;
         }
-      },
+      }
       FadeStatus::None => {}
     }
   }
@@ -257,7 +257,7 @@ pub struct MotionManager(HashMap<Rc<str>, Motion>);
 
 impl MotionManager {
   pub fn new(path: &PathBuf, model3: &cubism::json::model::Model3) -> anyhow::Result<Self> {
-    /*let motions = model3
+    let motions = model3
       .file_references
       .motions
       .idle
@@ -273,8 +273,8 @@ impl MotionManager {
 
         Ok((name.into(), motion))
       })
-      .collect::<anyhow::Result<HashMap<_, _>>>()?;*/
-    let motions = HashMap::new();
+      .collect::<anyhow::Result<HashMap<_, _>>>()?;
+    // let motions = HashMap::new();
 
     Ok(Self(motions))
   }
