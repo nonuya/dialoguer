@@ -1,4 +1,7 @@
-use std::{collections::{HashMap, VecDeque}, rc::Rc};
+use std::{
+  collections::{HashMap, VecDeque},
+  rc::Rc,
+};
 
 use crate::{
   dialog::parser::{Dialog, Event, Token, dialog_parser},
@@ -219,7 +222,8 @@ impl DialogPlayer {
             Some(myenum) => match myenum.values.get(enum_value) {
               Some(params) => {
                 for p in params {
-                  animator.set_parameter(p.name.clone(), get_parameter_value(p, enum_map, animator));
+                  animator
+                    .set_parameter(p.name.clone(), get_parameter_value(p, enum_map, animator));
                 }
               }
               None => warn!(
@@ -241,9 +245,16 @@ impl DialogPlayer {
             },
             None => warn!("EnumType '{}' doesn't exists!", enum_type),
           },
-          Event::SetAnim(name) => match motion_mgr.get(name) {
-            Some(motion) => animator.set_motion(motion.clone()),
+          Event::PlayAnimation(name, looped) => match motion_mgr.get(name) {
+            Some(motion) => animator.set_motion(motion.clone(), *looped),
             None => warn!("Animation '{}' not found", name),
+          },
+          Event::SetView(name) => match enum_map.views.get(name) {
+            Some(view) => {
+              animator.set_view(*view);
+              animator.set_target_view(*view);
+            }
+            None => warn!("SetView '{}' not found", name),
           },
           _ => {}
         }
@@ -345,6 +356,9 @@ impl DialogPlayer {
 
     let conversation = &nodes[conversation_iter.idx];
     let mut next_iter = None;
+    let mut pending_animation = None;
+    let mut pending_parameters = Vec::new();
+    let mut pending_remove_parameters = Vec::new();
 
     loop {
       let Some(idx) = conversation_iter.events.front_mut() else {
@@ -357,24 +371,23 @@ impl DialogPlayer {
       self.current_node_idx = conversation_iter.idx;
 
       match &conversation.events[*idx] {
+        // ===============
+        // Bloque de Cambios
+        // ===============
         Event::SetMainChoicer(id) => {
           if let Some(initial_dialog) = dialog_mgr.build(id) {
             self.initial_dialog = initial_dialog;
           }
-        }
-        Event::Text(text) => {
-          println!("{}: {}", conversation.label, text);
-        }
-        Event::Wait(seconds) => {
-          debug!("[Wait] {} seconds", seconds);
-          animator.set_timer(*seconds);
+          conversation_iter.events.pop_front();
+          continue;
         }
         Event::SetParameter(enum_type, enum_value) => {
           match enum_map.enums.get(enum_type) {
             Some(myenum) => match myenum.values.get(enum_value) {
               Some(params) => {
                 for p in params {
-                  animator.set_parameter(p.name.clone(), get_parameter_value(p, enum_map, animator));
+                  pending_parameters.push((p.name.clone(), get_parameter_value(p, enum_map, animator))); 
+                  // animator.set_parameter(p.name.clone(), get_parameter_value(p, enum_map, animator));
                 }
               }
               None => warn!(
@@ -386,6 +399,45 @@ impl DialogPlayer {
           }
           conversation_iter.events.pop_front();
           continue;
+        }
+        Event::PlayAnimation(name, looped) => {
+          match motion_mgr.get(name) {
+            // Some(motion) => animator.play_motion(motion.clone(), *looped),
+            Some(motion) => pending_animation = Some((motion.clone(), *looped)),
+            None => warn!("[SetAnim] Animation '{}' not found", name),
+          }
+
+          conversation_iter.events.pop_front();
+          continue;
+        }
+        Event::RemoveParamater(enum_type) => {
+          match enum_map.enums.get(enum_type) {
+            Some(myenum) => {
+              let params = myenum
+                .values
+                .values()
+                .next()
+                .context("EnumType is empty")
+                .unwrap();
+              for p in params {
+                // FIXME: Remove &'static str
+                warn!("[RemoveParameter] Removing '{}'", &p.name);
+                pending_remove_parameters.push(p.name.clone());
+                // animator.remove_parameter(&p.name);
+              }
+            }
+            None => warn!("[RemoveParameter] EnumType '{}' doesn't exists!", enum_type),
+          }
+          conversation_iter.events.pop_front();
+          continue;
+        }
+        // ==================================
+        Event::Text(text) => {
+          println!("{}: {}", conversation.label, text);
+        }
+        Event::Wait(seconds) => {
+          debug!("[Wait] {} seconds", seconds);
+          animator.set_timer(*seconds);
         }
         Event::Jump(id) => {
           self.current_dialog_name = id.clone();
@@ -405,42 +457,16 @@ impl DialogPlayer {
             None => warn!("[Jump] Failed to jumping. '{}' doesnt exists", id),
           }
         }
-        Event::RemoveParamater(enum_type) => {
-          match enum_map.enums.get(enum_type) {
-            Some(myenum) => {
-              let params = myenum
-                .values
-                .values()
-                .next()
-                .context("EnumType is empty")
-                .unwrap();
-              for p in params {
-                // FIXME: Remove &'static str
-                warn!("[RemoveParameter] Removing '{}'", &p.name);
-                animator.remove_parameter(&p.name);
-              }
-            }
-            None => warn!("[RemoveParameter] EnumType '{}' doesn't exists!", enum_type),
-          }
-          conversation_iter.events.pop_front();
-          continue;
-        }
-        Event::SetAnim(name) => match motion_mgr.get(name) {
-          Some(motion) => animator.play_motion(motion.clone()),
-          None => warn!("[SetAnim] Animation '{}' not found", name),
-        },
         Event::Next => {
           iter.queue.pop_front();
           break;
-        },
-        Event::SetView(name) => {
-          match enum_map.views.get(name) {
-            Some(view) => {
-              debug!("[SetView] Setting {name}");
-              animator.set_target_view(view.clone());
-            },
-            None => warn!("[SetView] View '{}' not found", name)
+        }
+        Event::SetView(name) => match enum_map.views.get(name) {
+          Some(view) => {
+            debug!("[SetView] Setting {name}");
+            animator.set_target_view(view.clone());
           }
+          None => warn!("[SetView] View '{}' not found", name),
         },
       }
 
@@ -450,6 +476,25 @@ impl DialogPlayer {
 
     if let Some(next) = next_iter.take() {
       self.change_iter(Some(next));
+    }
+
+    if let Some((motion, looped)) = pending_animation.take() {
+      animator.play_motion(motion, looped);
+      for (id, value) in pending_parameters {
+        animator.deferred_set_parameter(id, value);
+      }
+
+      for id in pending_remove_parameters {
+        animator.deferred_remove_parameter(id);
+      }
+    } else {
+      for id in pending_remove_parameters {
+        animator.remove_parameter(&id);
+      }
+
+      for (id, value) in pending_parameters {
+        animator.set_parameter(id, value);
+      }
     }
   }
 

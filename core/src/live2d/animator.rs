@@ -1,5 +1,5 @@
 use std::{
-  collections::HashMap,
+  collections::{HashMap, VecDeque},
   fs,
   path::{Path, PathBuf},
   rc::Rc,
@@ -72,7 +72,7 @@ impl Value {
 }
 
 enum FadeStatus {
-  FadeIn(Motion),
+  FadeIn(Motion, bool),
   FadeOut,
   None,
 }
@@ -88,6 +88,8 @@ pub struct Animator {
   map: HashMap<Rc<str>, Value>,
   view: ViewType,
   target_view: ViewType,
+  pending_set_parameter: VecDeque<(Rc<str>, Value)>,
+  pending_remove_parameter: VecDeque<Rc<str>>,
 }
 
 impl Animator {
@@ -98,6 +100,8 @@ impl Animator {
       view: initial_view,
       target_view: initial_view,
       fade_status: FadeStatus::None,
+      pending_set_parameter: VecDeque::new(),
+      pending_remove_parameter: VecDeque::new(),
       blackscreen_alpha: 0.0,
       map: HashMap::new(),
     }
@@ -107,16 +111,14 @@ impl Animator {
     self.blackscreen_alpha
   }
 
-  pub fn play_motion(&mut self, motion: Motion) {
-    self.fade_status = FadeStatus::FadeIn(motion);
-    self.set_timer(FADE_DURATION / 2.0);
+  pub fn play_motion(&mut self, motion: Motion, looped: bool) {
+    self.fade_status = FadeStatus::FadeIn(motion, looped);
     self.blackscreen_alpha = 0.0;
   }
 
-  pub fn set_motion(&mut self, mut motion: Motion) {
+  pub fn set_motion(&mut self, mut motion: Motion, looped: bool) {
     motion.play();
-    motion.set_looped(true);
-    self.stop_timer();
+    motion.set_looped(looped);
     self.motion = Some(motion);
   }
 
@@ -137,6 +139,10 @@ impl Animator {
 
   pub fn clear_parameters(&mut self) {
     self.map.clear();
+  }
+
+  pub fn deferred_set_parameter(&mut self, id: Rc<str>, value: Value) {
+    self.pending_set_parameter.push_back((id, value));
   }
 
   pub fn set_parameter(&mut self, id: Rc<str>, mut value: Value) {
@@ -177,12 +183,16 @@ impl Animator {
     self.map.remove(id);
   }
 
+  pub fn deferred_remove_parameter(&mut self, id: Rc<str>) {
+    self.pending_remove_parameter.push_back(id);
+  }
+
   pub fn set_timer(&mut self, seconds: f32) {
     self.timer = Some(seconds);
   }
 
   pub fn is_timer_playing(&self) -> bool {
-    self.timer.is_some()
+    self.timer.is_some() || matches!(self.fade_status, FadeStatus::FadeIn(..))
   }
 
   pub fn set_target_view(&mut self, target_view: ViewType) {
@@ -208,20 +218,44 @@ impl Animator {
     self.motion = None;
   }
 
+  // FIXME: Hay un Delay en Wait, no sé si termina el Wait y se espera unos microsegundos para empezar
   pub fn update(&mut self, deltatime: f32, model: &mut Model) {
+    // Fade
+    match std::mem::replace(&mut self.fade_status, FadeStatus::None) {
+      FadeStatus::FadeIn(motion, looped) => {
+        self.blackscreen_alpha += FADE_STEP * deltatime;
+
+        if self.blackscreen_alpha >= 1.0 {
+          // self.blackscreen_alpha = 1.0 + FADE_DURATION * 0.2; // Little delay for update motion
+          self.blackscreen_alpha = 1.0;
+          self.fade_status = FadeStatus::FadeOut;
+          while let Some((id, value)) = self.pending_set_parameter.pop_front() {
+            self.set_parameter(id, value);
+          }
+          while let Some(id) = self.pending_remove_parameter.pop_front() {
+            self.remove_parameter(&id);
+          }
+          self.set_motion(motion, looped);
+        } else {
+          self.fade_status = FadeStatus::FadeIn(motion, looped);
+        }
+      }
+      FadeStatus::FadeOut => {
+        self.blackscreen_alpha -= FADE_STEP * deltatime;
+        if self.blackscreen_alpha <= 0.0 {
+          self.blackscreen_alpha = 0.0;
+          self.fade_status = FadeStatus::None;
+        } else {
+          self.fade_status = FadeStatus::FadeOut;
+        }
+      }
+      FadeStatus::None => {}
+    }
+
     // Motion
     if let Some(motion) = self.motion.as_mut() {
       motion.tick(deltatime as f64);
       model.apply_motion(motion).unwrap();
-    }
-
-    // Timer
-    if let Some(remaining) = self.timer.as_mut() {
-      *remaining -= deltatime;
-
-      if *remaining <= 0.0 {
-        self.timer = None;
-      }
     }
 
     for (id, value) in &mut self.map {
@@ -238,7 +272,7 @@ impl Animator {
         } => {
           if actual != target {
             let delta = *target - *actual;
-            let step = *step;
+            let step = *step * deltatime * 60.0;
 
             if delta.abs() <= step {
               *actual = *target;
@@ -257,29 +291,13 @@ impl Animator {
     // Otros ajustes de parametros
     model.update_parameters();
 
-    // Fade
-    match std::mem::replace(&mut self.fade_status, FadeStatus::None) {
-      FadeStatus::FadeIn(motion) => {
-        self.blackscreen_alpha += FADE_STEP * deltatime;
+    // Timer
+    if !matches!(self.fade_status, FadeStatus::FadeIn(..)) && let Some(remaining) = self.timer.as_mut() {
+      *remaining -= deltatime;
 
-        if self.blackscreen_alpha >= 1.0 {
-          self.blackscreen_alpha = 1.0 + FADE_DURATION * 0.2; // Little delay for update motion
-          self.fade_status = FadeStatus::FadeOut;
-          self.set_motion(motion);
-        } else {
-          self.fade_status = FadeStatus::FadeIn(motion);
-        }
+      if *remaining <= 0.0 {
+        self.timer = None;
       }
-      FadeStatus::FadeOut => {
-        self.blackscreen_alpha -= FADE_STEP * deltatime;
-        if self.blackscreen_alpha <= 0.0 {
-          self.blackscreen_alpha = 0.0;
-          self.fade_status = FadeStatus::None;
-        } else {
-          self.fade_status = FadeStatus::FadeOut;
-        }
-      }
-      FadeStatus::None => {}
     }
 
     // ViewType 

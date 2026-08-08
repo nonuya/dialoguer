@@ -317,19 +317,22 @@ impl Layout {
             .border(true)
             .build(ui, || {
               if let Some(id) = self.selected_node_id {
+                if ui.button("Play") {
+                  match self.graph.export_to_dialog(id, &self.timelines) {
+                    Ok(dialogs) => {
+                      let name = self.graph.get_node_by_id(id).unwrap().name();
+                      Self::play(&mut ctx, Some((name.clone(), dialogs)));
+                    }
+                    Err(e) => warn!("[Graph] Failed to Play Node: {e}"),
+                  }
+                }
+
+                ui.same_line();
                 if ctx.dialog_player.as_ref().is_some_and(|p| p.is_playing()) {
+                  ui.separator_vertical();
+                  ui.same_line();
                   if ui.button("Stop") {
                     Self::play(&mut ctx, None);
-                  }
-                } else {
-                  if ui.button("Play") {
-                    match self.graph.export_to_dialog(id, &self.timelines) {
-                      Ok(dialogs) => {
-                        let name = self.graph.get_node_by_id(id).unwrap().name();
-                        Self::play(&mut ctx, Some((name.clone(), dialogs)));
-                      }
-                      Err(e) => warn!("[Graph] Failed to Play Node: {e}"),
-                    }
                   }
                 }
 
@@ -475,7 +478,7 @@ impl Layout {
             ui.same_line();
 
             // Selected
-            if ui.button(if is_dialog_playing {"Stop"} else {"Play Container"}) {
+            if ui.button("Play Container") {
               match selected {
                 Selection::Block {
                   container_index, ..
@@ -646,20 +649,26 @@ impl Layout {
                   let mut move_index: Option<(usize, isize)> = None; // (idx, offset: -1 sube, +1 baja)
 
                   // ANIMATION
+                  ui.text("Animation");
+                  ui.separator();
+                  ui.checkbox("Loop?", &mut anim.1);
+                  ui.same_line();
+
                   Self::combo_box(
                     ui,
-                    "Animation",
-                    anim,
+                    &mut anim.0,
                     "##anim_combo",
                     ctx.motion_mgr.names(),
                     &self.unchanged,
                     self.empty.clone(),
                   );
 
+                  ui.text("View");
+                  ui.separator();
+
                   // VIEW
                   Self::combo_box(
                     ui,
-                    "View",
                     view,
                     "##view_combo",
                     ctx.enummap.views.keys(),
@@ -673,6 +682,12 @@ impl Layout {
                   for (idx, entry) in parameters.iter_mut().enumerate() {
                     let _id = ui.push_id(idx as i32);
 
+                    if ui.button("X") {
+                      remove_index = Some(idx);
+                    }
+
+                    ui.same_line();
+
                     if ui.button("^") {
                       move_index = Some((idx, -1));
                     }
@@ -685,7 +700,7 @@ impl Layout {
 
                     ui.text(&entry.0);
                     ui.same_line();
-                    ui.set_next_item_width(100.0);
+                    ui.set_next_item_width(-10.0);
                     match ctx.enummap.enums.get(&entry.0) {
                       Some(enumtype) => {
                         if let Some(_) =
@@ -705,10 +720,6 @@ impl Layout {
                         }
                       }
                       None => ui.text("Unknown Enum"),
-                    }
-                    ui.same_line();
-                    if ui.button("x") {
-                      remove_index = Some(idx);
                     }
                   }
 
@@ -751,7 +762,6 @@ impl Layout {
 
   fn combo_box<Opts, T>(
     ui: &Ui,
-    name: &str,
     target: &mut Rc<str>,
     id: &str,
     options: Opts,
@@ -761,16 +771,13 @@ impl Layout {
     Opts: IntoIterator<Item = T>,
     T: AsRef<str>,
   {
-    ui.spacing();
-    ui.text(name);
-    ui.separator();
     let preview = if target.is_empty() {
       default_value
     } else {
       &target
     };
 
-    ui.set_next_item_width(ui.content_region_avail()[0]);
+    ui.set_next_item_width(-1.0);
     if let Some(_) = ui.begin_combo(id, preview) {
       let unchanged_selected = target.is_empty();
       if ui

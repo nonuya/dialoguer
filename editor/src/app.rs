@@ -100,7 +100,7 @@ impl App {
       blackscreen_renderer,
       texture_target,
       motion_mgr,
-      animator: core::live2d::animator::Animator::new(enummap.views.get("Initial").unwrap().clone()),
+      animator: core::live2d::animator::Animator::new(enummap.views.get("Default").unwrap().clone()),
       enummap,
       layout: Layout::new(imgui_context, &dialog_mgr),
       dialog_mgr,

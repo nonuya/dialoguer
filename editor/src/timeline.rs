@@ -19,7 +19,7 @@ pub enum TimelineBlockType {
 #[derive(Default)]
 pub struct TimelineSetBlockType {
   pub parameters: Vec<(Rc<str>, Rc<str>)>, // EnumName ValueName
-  pub anim: Rc<str>,
+  pub anim: (Rc<str>, bool),
   pub view: Rc<str>,
 }
 
@@ -27,7 +27,7 @@ impl TimelineSetBlockType {
   pub fn is_empty(&self) -> bool {
     self.parameters.is_empty()
       && self.view.is_empty()
-      && self.anim.is_empty()
+      && self.anim.0.is_empty()
   }
 }
 
@@ -117,8 +117,8 @@ impl Container {
             events.push(Event::SetView(view.clone()));
           }
 
-          if !anim.is_empty() {
-            events.push(Event::SetAnim(anim.clone()));
+          if !anim.0.is_empty() {
+            events.push(Event::PlayAnimation(anim.0.clone(), anim.1));
           }
 
           for p in parameters {
@@ -200,6 +200,9 @@ impl Timeline {
           Event::SetParameter(name, value) => {
             pending_set.parameters.push((name.clone(), value.clone()))
           }
+          Event::PlayAnimation(name, looped) => {
+            pending_set.anim = (name.clone(), *looped);
+          },
           Event::RemoveParamater(name) => pending_set
             .parameters
             .push((name.clone(), "NonControl".into())),
@@ -207,7 +210,6 @@ impl Timeline {
           Event::SetMainChoicer(_) => {
             // Managed by Graph
           },
-          Event::SetAnim(name) => pending_set.anim = name.clone(),
           other => {
             if !pending_set.is_empty() {
               add_block(TimelineBlockType::Set(std::mem::take(&mut pending_set)));

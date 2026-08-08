@@ -20,13 +20,14 @@ pub enum Block<'a> {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Command<'a> {
-  Wait(f32),       // @wait 2.3
+  Wait(f32),       // @wait 2.3 
   Jump(&'a str), // @jump <ID>
   Set {
     // @set MyEnum.value
     r#enum: &'a str,
     value: &'a str,
   },
+  PlayAnimation(&'a str, bool), // @play Anim01 once or @play Anim01
   SetMainChoicer(&'a str), // @setmainchoicer [[MyChoicer]]
   Next,                    // @next
 }
@@ -96,10 +97,18 @@ pub fn dialog_block_lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token<'a>>, Extr
     .ignore_then(parser_block_choicer)
     .map(Command::SetMainChoicer);
 
+  let setanimation = just("play")
+    .then_ignore(whitespace)
+    .ignore_then(
+      text::ascii::ident()
+      .then(just("once").or_not()) 
+    )
+    .map(|(name, once)| Command::PlayAnimation(name, once.is_none()));
+
   let next = just("next").ignored().map(|_| Command::Next);
 
   let cmd = just('@')
-    .ignore_then(choice((jump, wait, set, setmainchoicer, next)))
+    .ignore_then(choice((jump, wait, set, setanimation, setmainchoicer, next)))
     .map(Token::Command);
   // ==========================
 
@@ -130,7 +139,7 @@ fn parse_float<'a>() -> impl Parser<'a, &'a str, f32, Extra<'a>> {
 pub enum Event {
   Text(Rc<str>),
   SetMainChoicer(Rc<str>),
-  SetAnim(Rc<str>),
+  PlayAnimation(Rc<str>, bool),
   SetView(Rc<str>),
   Jump(Rc<str>),
   SetParameter(Rc<str>, Rc<str>),
@@ -157,9 +166,9 @@ pub fn dialog_parser<'a>()
     Token::Text(text) => Event::Text(text.into()),
     Token::Command(Command::Wait(seconds)) => Event::Wait(seconds),
     Token::Command(Command::Jump(id)) => Event::Jump(id.into()),
+    Token::Command(Command::PlayAnimation(name, looped)) => Event::PlayAnimation(name.into(), looped),
     Token::Command(Command::Set { r#enum, value }) => {
       match r#enum {
-        "AnimType" => Event::SetAnim(value.into()),
         "ViewType" => Event::SetView(value.into()),
         _ => {
           if value == "NonAction" || value == "NonControl" {
