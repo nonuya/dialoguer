@@ -201,6 +201,8 @@ impl Graph {
       }
     }
 
+    nodes.sort_unstable_by(|a, b| natord::compare(a.name(), b.name()));
+
     (timelines, nodes, info_by_id)
   }
 
