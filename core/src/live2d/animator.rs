@@ -14,6 +14,14 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize)]
 pub struct EnumMap {
   pub enums: HashMap<Rc<str>, EnumType>,
+  pub views: HashMap<Rc<str>, ViewType>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy)]
+pub struct ViewType {
+  pub position: (f32, f32, f32),
+  pub rotation: f32,
+  pub scale: f32,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -78,13 +86,17 @@ pub struct Animator {
   timer: Option<f32>,
   blackscreen_alpha: f32,
   map: HashMap<Rc<str>, Value>,
+  view: ViewType,
+  target_view: ViewType,
 }
 
 impl Animator {
-  pub fn new() -> Self {
+  pub fn new(initial_view: ViewType) -> Self {
     Self {
       motion: None,
       timer: None,
+      view: initial_view,
+      target_view: initial_view,
       fade_status: FadeStatus::None,
       blackscreen_alpha: 0.0,
       map: HashMap::new(),
@@ -173,6 +185,21 @@ impl Animator {
     self.timer.is_some()
   }
 
+  pub fn set_target_view(&mut self, target_view: ViewType) {
+    self.target_view = target_view;
+  }
+
+  pub fn set_view(&mut self, view: ViewType) {
+    self.view = view;
+  }
+
+  pub fn get_matrix(&self) -> glam::Mat4 {
+    glam::Mat4::from_scale_rotation_translation(
+      glam::Vec3::splat(self.view.scale),
+      glam::Quat::from_rotation_z(self.view.rotation.to_radians()),
+      glam::vec3(self.view.position.0, self.view.position.1, self.view.position.2))
+  }
+
   pub fn stop_timer(&mut self) {
     self.timer = None;
   }
@@ -182,11 +209,13 @@ impl Animator {
   }
 
   pub fn update(&mut self, deltatime: f32, model: &mut Model) {
+    // Motion
     if let Some(motion) = self.motion.as_mut() {
       motion.tick(deltatime as f64);
       model.apply_motion(motion).unwrap();
     }
 
+    // Timer
     if let Some(remaining) = self.timer.as_mut() {
       *remaining -= deltatime;
 
@@ -228,6 +257,7 @@ impl Animator {
     // Otros ajustes de parametros
     model.update_parameters();
 
+    // Fade
     match std::mem::replace(&mut self.fade_status, FadeStatus::None) {
       FadeStatus::FadeIn(motion) => {
         self.blackscreen_alpha += FADE_STEP * deltatime;
@@ -251,6 +281,34 @@ impl Animator {
       }
       FadeStatus::None => {}
     }
+
+    // ViewType 
+    const VIEW_SPEED: f32 = 0.20;
+    const EPSILON: f32 = 0.01;
+    let t = (VIEW_SPEED * deltatime).min(1.0);
+
+    self.view.position.0 +=
+        (self.target_view.position.0 - self.view.position.0) * t;
+    self.view.position.1 +=
+        (self.target_view.position.1 - self.view.position.1) * t;
+    self.view.position.2 +=
+        (self.target_view.position.2 - self.view.position.2) * t;
+
+    self.view.rotation +=
+        (self.target_view.rotation - self.view.rotation) * t;
+
+    self.view.scale +=
+        (self.target_view.scale - self.view.scale) * t;
+
+    if
+        (self.view.position.0 - self.target_view.position.0).abs() < EPSILON &&
+        (self.view.position.1 - self.target_view.position.1).abs() < EPSILON &&
+        (self.view.position.2 - self.target_view.position.2).abs() < EPSILON &&
+        (self.view.rotation - self.target_view.rotation).abs() < EPSILON &&
+        (self.view.scale - self.target_view.scale).abs() < EPSILON
+    {
+        self.view = self.target_view.clone();
+    }
   }
 }
 
@@ -258,7 +316,6 @@ pub struct MotionManager(HashMap<Rc<str>, Motion>);
 
 impl MotionManager {
   pub fn new(path: &PathBuf, model3: &cubism::json::model::Model3) -> anyhow::Result<Self> {
-    /*
     let motions = model3
       .file_references
       .motions
@@ -275,8 +332,8 @@ impl MotionManager {
 
         Ok((name.into(), motion))
       })
-      .collect::<anyhow::Result<HashMap<_, _>>>()?;*/
-    let motions = HashMap::new();
+      .collect::<anyhow::Result<HashMap<_, _>>>()?;
+    // let motions = HashMap::new();
 
     Ok(Self(motions))
   }

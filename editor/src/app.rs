@@ -22,7 +22,6 @@ pub struct App {
   texture_id: TextureId,
   model: core::live2d::Model,
   enummap: core::live2d::animator::EnumMap,
-  matrix: glam::Mat4,
   model_renderer: core::renderer::ModelRenderer,
   blackscreen_renderer: core::renderer::BlackScreenRenderer,
   texture_target: core::renderer::TextureTarget,
@@ -93,23 +92,16 @@ impl App {
     let dialog_mgr = core::dialog::DialogManager::new_from_tokens(dialog_tokens)
       .context("Failed to create DialogManager")?;
 
-    let matrix = glam::Mat4::from_scale_rotation_translation(
-      glam::Vec3::splat(1000.0),
-      glam::Quat::IDENTITY,
-      glam::vec3(0.0, 0.0, 0.0),
-    );
-
     Ok(Self {
       ctx,
       texture_id,
       model,
-      enummap,
-      matrix,
       model_renderer,
       blackscreen_renderer,
       texture_target,
       motion_mgr,
-      animator: core::live2d::animator::Animator::new(),
+      animator: core::live2d::animator::Animator::new(enummap.views.get("Initial").unwrap().clone()),
+      enummap,
       layout: Layout::new(imgui_context, &dialog_mgr),
       dialog_mgr,
       dialog_player: None,
@@ -131,7 +123,7 @@ impl App {
 
   pub fn draw(&mut self, ui: &mut Ui) {
     self.texture_target.draw(|| {
-      self.model_renderer.draw(&self.model, self.matrix);
+      self.model_renderer.draw(&self.model, self.animator.get_matrix());
       self
         .blackscreen_renderer
         .draw(self.animator.blackscreen_alpha());

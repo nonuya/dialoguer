@@ -656,6 +656,17 @@ impl Layout {
                     self.empty.clone(),
                   );
 
+                  // VIEW
+                  Self::combo_box(
+                    ui,
+                    "View",
+                    view,
+                    "##view_combo",
+                    ctx.enummap.views.keys(),
+                    &self.unchanged,
+                    self.empty.clone(),
+                  );
+
                   ui.spacing();
                   ui.text("Parameters");
                   ui.separator();

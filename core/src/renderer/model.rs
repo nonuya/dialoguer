@@ -103,7 +103,6 @@ impl ModelRenderer {
   }
 
   pub fn draw(&self, model: &Model, matrix: glam::Mat4) {
-    // let project = glam::camera::rh::proj::opengl::orthographic(0.0, 1280.0, -1280.0, 0.0, -1.0, 1.0);
     let projection = glam::camera::rh::proj::opengl::orthographic(
       self.layout.x,
       self.layout.x + self.layout.width,

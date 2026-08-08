@@ -432,10 +432,16 @@ impl DialogPlayer {
         Event::Next => {
           iter.queue.pop_front();
           break;
-        }
-        ev => {
-          debug!("[Unknown Event] {:#?}", ev);
-        }
+        },
+        Event::SetView(name) => {
+          match enum_map.views.get(name) {
+            Some(view) => {
+              debug!("[SetView] Setting {name}");
+              animator.set_target_view(view.clone());
+            },
+            None => warn!("[SetView] View '{}' not found", name)
+          }
+        },
       }
 
       conversation_iter.events.pop_front();
