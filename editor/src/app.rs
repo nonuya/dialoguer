@@ -1,8 +1,10 @@
 use anyhow::Context;
 use chumsky::Parser;
+use core::renderer::RenderContext;
 use dear_imgui_glow::GlowRenderer;
 use dear_imgui_rs::*;
-use core::renderer::RenderContext;
+use glam::vec3;
+use glow::HasContext;
 use std::{
   fs::{self, File},
   path::PathBuf,
@@ -20,7 +22,7 @@ pub struct App {
   texture_id: TextureId,
   model: core::live2d::Model,
   enummap: core::live2d::animator::EnumMap,
-  mvp: glam::Mat4,
+  matrix: glam::Mat4,
   model_renderer: core::renderer::ModelRenderer,
   blackscreen_renderer: core::renderer::BlackScreenRenderer,
   texture_target: core::renderer::TextureTarget,
@@ -52,6 +54,8 @@ impl App {
       "Failed to parse '{}.model3.json'",
       model_name.display()
     ))?;
+    let layout = model3.layout.context("model3.json doesnt have Layout")?;
+    log::info!("Model Layout: {:#?}", layout);
     let mut model = core::live2d::Model::new(gl.clone(), &model_path, &model3)?;
     model.save_parameters();
 
@@ -61,17 +65,10 @@ impl App {
 
     let ctx = Rc::from(core::renderer::RenderContext::from_gl(gl));
 
-    let model_renderer = core::renderer::ModelRenderer::new(
-      ctx.clone(),
-      core::live2d::config::MODEL_WIDTH,
-      core::live2d::config::MODEL_HEIGHT,
-    )
-    .context("Failed to create Live2D Renderer")?;
-    let texture_target = core::renderer::TextureTarget::new(
-      ctx.clone(),
-      core::live2d::config::MODEL_WIDTH,
-      core::live2d::config::MODEL_HEIGHT,
-    )?;
+    let model_renderer = core::renderer::ModelRenderer::new(ctx.clone(), layout)
+      .context("Failed to create Live2D Renderer")?;
+    let texture_target =
+      core::renderer::TextureTarget::new(ctx.clone(), layout.width as u32, layout.height as u32)?;
     let blackscreen_renderer = core::renderer::BlackScreenRenderer::new(ctx.clone())?;
 
     let texture_id = TextureId::new(1000);
@@ -96,12 +93,18 @@ impl App {
     let dialog_mgr = core::dialog::DialogManager::new_from_tokens(dialog_tokens)
       .context("Failed to create DialogManager")?;
 
+    let matrix = glam::Mat4::from_scale_rotation_translation(
+      glam::Vec3::splat(1000.0),
+      glam::Quat::IDENTITY,
+      glam::vec3(0.0, 0.0, 0.0),
+    );
+
     Ok(Self {
       ctx,
       texture_id,
       model,
       enummap,
-      mvp: glam::Mat4::from_scale(glam::vec3(2.0, 2.0, 1.0)),
+      matrix,
       model_renderer,
       blackscreen_renderer,
       texture_target,
@@ -128,8 +131,10 @@ impl App {
 
   pub fn draw(&mut self, ui: &mut Ui) {
     self.texture_target.draw(|| {
-      self.model_renderer.draw(&self.model, &self.mvp);
-      self.blackscreen_renderer.draw(self.animator.blackscreen_alpha());
+      self.model_renderer.draw(&self.model, self.matrix);
+      self
+        .blackscreen_renderer
+        .draw(self.animator.blackscreen_alpha());
     });
 
     let ctx = EditorContext {
@@ -150,13 +155,15 @@ impl App {
         return;
       }
 
-      let mut draw_size = available;
+      let layout = self.model_renderer.layout();
 
-      if available[0] / available[1] > 1.0 {
-        draw_size[0] = available[1];
+      let aspect_ratio = layout.width / layout.height;
+
+      let draw_size = if available[0] / available[1] > aspect_ratio {
+        [available[1] * aspect_ratio, available[1]]
       } else {
-        draw_size[1] = available[0];
-      }
+        [available[0], available[0] / aspect_ratio]
+      };
 
       let cursor = ui.cursor_pos();
 

@@ -1,7 +1,8 @@
+use crate::live2d::{Model, config};
 use crate::renderer::RenderContext;
 use crate::renderer::shader::create_program_from_source;
-use crate::live2d::{Model, config};
 use cubism::core::{ConstantFlags, DynamicFlags};
+use cubism::json::model::Layout;
 use glow::HasContext;
 use std::rc::Rc;
 
@@ -83,23 +84,39 @@ impl ModelShaders {
 pub struct ModelRenderer {
   shaders: ModelShaders,
   ctx: Rc<RenderContext>,
-  width: u32,
-  height: u32,
+  layout: Layout,
 }
 
 impl ModelRenderer {
-  pub fn new(ctx: Rc<RenderContext>, width: u32, height: u32) -> anyhow::Result<Self> {
+  pub fn new(ctx: Rc<RenderContext>, layout: Layout) -> anyhow::Result<Self> {
     let shaders = ModelShaders::new(ctx.get_context())?;
 
     Ok(Self {
       ctx,
       shaders,
-      width,
-      height
+      layout,
     })
   }
 
-  pub fn draw(&self, model: &Model, mvp: &glam::Mat4) {
+  pub fn layout(&self) -> Layout {
+    self.layout
+  }
+
+  pub fn draw(&self, model: &Model, matrix: glam::Mat4) {
+    // let project = glam::camera::rh::proj::opengl::orthographic(0.0, 1280.0, -1280.0, 0.0, -1.0, 1.0);
+    let projection = glam::camera::rh::proj::opengl::orthographic(
+      self.layout.x,
+      self.layout.x + self.layout.width,
+      -(self.layout.y + self.layout.height),
+      -self.layout.y,
+      -1.0,
+      1.0,
+    );
+    let center =
+      glam::Mat4::from_translation(glam::vec3(self.layout.center_x, -self.layout.center_y, 0.0));
+
+    let mvp = projection * center * matrix;
+
     self.draw_masks(model);
     self.draw_model(model, mvp);
   }
@@ -208,12 +225,17 @@ impl ModelRenderer {
     }
   }
 
-  fn draw_model(&self, model: &Model, mvp: &glam::Mat4) {
+  fn draw_model(&self, model: &Model, mvp: glam::Mat4) {
     let clipping_manager = model.get_clipping_manager();
     let gl = self.ctx.get_context();
 
     unsafe {
-      gl.viewport(0, 0, self.width as i32, self.height as i32);
+      gl.viewport(
+        self.layout.x as i32,
+        self.layout.y as i32,
+        self.layout.width as i32,
+        self.layout.height as i32,
+      );
 
       gl.enable(glow::BLEND);
       gl.disable(glow::DEPTH_TEST);

@@ -258,6 +258,7 @@ pub struct MotionManager(HashMap<Rc<str>, Motion>);
 
 impl MotionManager {
   pub fn new(path: &PathBuf, model3: &cubism::json::model::Model3) -> anyhow::Result<Self> {
+    /*
     let motions = model3
       .file_references
       .motions
@@ -274,8 +275,8 @@ impl MotionManager {
 
         Ok((name.into(), motion))
       })
-      .collect::<anyhow::Result<HashMap<_, _>>>()?;
-    // let motions = HashMap::new();
+      .collect::<anyhow::Result<HashMap<_, _>>>()?;*/
+    let motions = HashMap::new();
 
     Ok(Self(motions))
   }
