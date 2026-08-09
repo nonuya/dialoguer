@@ -23,9 +23,6 @@ pub struct Layout {
   open_modal: bool,
   node_editor: dear_node_editor::EditorContext,
   graph: Graph,
-  timelines: HashMap<NodeId, Timeline>,
-  selected_node_id: Option<NodeId>,     // For Preview
-  selected_timeline_id: Option<NodeId>, // For Timeline
   is_main_layout: bool,
   selected_enum: Option<(Rc<str>, Rc<str>)>,
   enumlog: Vec<(Rc<str>, Rc<str>)>,
@@ -39,7 +36,6 @@ impl Layout {
     imgui_context: &dear_imgui_rs::Context,
     dialog_mgr: &core::dialog::DialogManager,
   ) -> Self {
-    let (timelines, graph) = Graph::new(dialog_mgr);
     Self {
       layout_initialized: false,
       node_editor: dear_node_editor::EditorContext::create(imgui_context),
@@ -47,10 +43,7 @@ impl Layout {
       enumlog: Vec::new(),
       is_main_layout: true,
       open_modal: false,
-      graph,
-      timelines,
-      selected_timeline_id: None,
-      selected_node_id: None,
+      graph: Graph::new(dialog_mgr),
       new_modal_string: String::new(),
       non_control: "NonControl".into(),
       unchanged: "(Unchanged)".into(),
@@ -318,15 +311,20 @@ impl Layout {
             .size([avail[0], graph_height])
             .border(true)
             .build(ui, || {
-              if let Some(id) = self.selected_node_id {
-                if ui.is_window_focused() && ui.io().key_ctrl() && ui.is_key_pressed(Key::C) {
-                  println!("Copied");
+              if ui.is_window_focused() {
+                if ui.io().key_ctrl() && ui.is_key_pressed(Key::Z) {
+                  self.graph.undo();
                 }
+                if ui.io().key_ctrl() && ui.is_key_pressed(Key::Y) {
+                  self.graph.redo();
+                }
+              }
 
+              if let Some(node) = self.graph.get_selected_node() {
                 if ui.button("Play") {
-                  match self.graph.export_to_dialog(id, &self.timelines) {
+                  match self.graph.export_to_dialog(node.id()) {
                     Ok(dialogs) => {
-                      let name = self.graph.get_node_by_id(id).unwrap().name();
+                      let name = self.graph.get_node_by_id(node.id()).unwrap().name();
                       Self::play(&mut ctx, Some((name.clone(), dialogs)));
                     }
                     Err(e) => warn!("[Graph] Failed to Play Node: {e}"),
@@ -347,10 +345,6 @@ impl Layout {
                 ui.same_line();
               }
 
-              let mut pending_select_id = None;
-              let mut pending_delete_id = None;
-              let mut pending_add_id = None;
-
               self.graph.draw(
                 ui,
                 &self.node_editor,
@@ -358,40 +352,7 @@ impl Layout {
                   .dialog_player
                   .as_ref()
                   .and_then(|p| p.current_dialog_name()),
-                |id| {
-                  pending_add_id = Some(id);
-                },
-                |id| {
-                  pending_select_id = Some(id);
-                },
-                |id| {
-                  pending_delete_id = Some(id);
-                },
               );
-
-              if let Some(id) = pending_add_id.take() {
-                let node = self.graph.get_node_by_id(id).unwrap();
-                if matches!(node, Node::Conversation { .. }) {
-                  assert!(self.timelines.insert(id, Timeline::new_empty()).is_none());
-                }
-              }
-
-              if let Some(selection) = pending_select_id.take() {
-                self.selected_node_id = selection;
-                self.selected_timeline_id = selection.and_then(|id| {
-                  let node = self.graph.get_node_by_id(id).unwrap();
-
-                  match node {
-                    Node::Conversation { .. } => Some(id),
-                    _ => None,
-                  }
-                });
-              }
-
-              if let Some(id) = pending_delete_id.take() {
-                self.timelines.remove_entry(&id);
-                self.reset_graph_selection();
-              }
             });
 
           // Inspector
@@ -402,8 +363,7 @@ impl Layout {
               ui.text("Inspector");
               ui.separator();
 
-              if let Some(id) = self.selected_node_id {
-                let node = self.graph.get_mut_node_by_id(id).unwrap();
+              if let Some(node) = self.graph.get_mut_selected_node() {
                 let name = match node {
                   Node::Conversation { name, .. } => name,
                   Node::Choicer { name, .. } => name,
@@ -417,352 +377,354 @@ impl Layout {
         });
 
         ui.window("Timeline").build(|| {
-          if self.selected_timeline_id.is_none() {
-            ui.text("Select some Conversation node");
-            return;
+          self.draw_timeline(ui, &mut ctx);
+        });
+
+        ui.window("Properties").build(|| {
+          self.draw_properties(ui, &ctx);
+        });
+      });
+  }
+
+  fn draw_properties(&mut self, ui: &Ui, ctx: &EditorContext) {
+    if let Some(selected) = self
+      .graph
+      .get_mut_selected_timeline()
+      .and_then(|t| t.get_selected())
+    {
+      match selected {
+        Selection::Container { container, .. } => {
+          ui.text("Who?");
+          ui.same_line();
+          ui.input_text(format!("##container_{}", container.id), &mut container.name)
+            .build();
+        }
+        Selection::Block {
+          block,
+          container_id,
+          ..
+        } => match &mut block.value {
+          TimelineBlockType::Text(text) => {
+            ui.text("Text:");
+            ui.same_line();
+            ui.set_next_item_width(-1.0);
+            ui.input_text(format!("##{}_{}_text", container_id, block.id), text)
+              .build();
+          }
+          TimelineBlockType::Wait(seconds) => {
+            ui.text("Wait:");
+            ui.same_line();
+
+            ui.input_float_config("##wait_seconds")
+              .step(0.05)
+              .build(seconds);
+
+            ui.same_line();
+            ui.text("seconds");
+          }
+          TimelineBlockType::Set(TimelineSetBlockType {
+            parameters,
+            anim,
+            view,
+          }) => {
+            let mut remove_index: Option<usize> = None;
+            let mut move_index: Option<(usize, isize)> = None; // (idx, offset: -1 sube, +1 baja)
+
+            // ANIMATION
+            ui.text("Animation");
+            ui.separator();
+            ui.checkbox("Loop?", &mut anim.1);
+            ui.same_line();
+
+            Self::combo_box(
+              ui,
+              &mut anim.0,
+              "##anim_combo",
+              ctx.motion_mgr.names(),
+              &self.unchanged,
+              self.empty.clone(),
+            );
+
+            ui.text("View");
+            ui.separator();
+
+            // VIEW
+            Self::combo_box(
+              ui,
+              view,
+              "##view_combo",
+              ctx.enummap.views.keys(),
+              &self.unchanged,
+              self.empty.clone(),
+            );
+
+            ui.spacing();
+            ui.text("Parameters");
+            ui.separator();
+            for (idx, entry) in parameters.iter_mut().enumerate() {
+              let _id = ui.push_id(idx as i32);
+
+              if ui.button("X") {
+                remove_index = Some(idx);
+              }
+
+              ui.same_line();
+
+              if ui.button("^") {
+                move_index = Some((idx, -1));
+              }
+              ui.same_line();
+
+              if ui.button("v") {
+                move_index = Some((idx, 1));
+              }
+              ui.same_line();
+
+              ui.text(&entry.0);
+              ui.same_line();
+              ui.set_next_item_width(-10.0);
+              match ctx.enummap.enums.get(&entry.0) {
+                Some(enumtype) => {
+                  if let Some(_) = ui.begin_combo(format!("##{}_{}", &entry.0, &entry.1), &entry.1)
+                  {
+                    for value in enumtype
+                      .values
+                      .iter()
+                      .map(|v| v.0)
+                      .chain(std::iter::once(&self.non_control))
+                    {
+                      let selected = entry.1 == *value;
+                      if ui.selectable_config(value).selected(selected).build() {
+                        entry.1 = value.clone();
+                      }
+                    }
+                  }
+                }
+                None => ui.text("Unknown Enum"),
+              }
+            }
+
+            if let Some((idx, offset)) = move_index {
+              let target = idx as isize + offset;
+              if target >= 0 && (target as usize) < parameters.len() {
+                parameters.swap(idx, target as usize);
+              }
+            }
+            if let Some(idx) = remove_index {
+              parameters.remove(idx);
+            }
+
+            ui.spacing();
+            // --- Botón "+" al final: abre un combobox para elegir qué agregar ---
+            if ui.button_with_size("+", [ui.content_region_avail()[0], 0.0]) {
+              ui.open_popup("##add_entry_popup");
+            }
+            if let Some(_) = ui.begin_popup("##add_entry_popup") {
+              let mut params: Vec<_> = ctx.enummap.enums.iter().collect();
+              params.sort_unstable_by_key(|&p| p.0);
+              for (prop_name, prop_value) in params {
+                if ui.selectable_config(prop_name).size([0.0, 0.0]).build() {
+                  parameters.push((
+                    prop_name.clone(),
+                    prop_value.values.iter().next().unwrap().0.clone(),
+                  ));
+                  ui.close_current_popup();
+                }
+              }
+            }
+          }
+          TimelineBlockType::Next => {}
+        },
+      }
+    }
+  }
+
+  fn draw_timeline(&mut self, ui: &Ui, ctx: &mut EditorContext) {
+    if !self
+      .graph
+      .get_selected_node_id()
+      .is_some_and(|id| self.graph.has_node_a_timeline(id))
+    {
+      ui.text("Select a Conversation Node");
+      return;
+    }
+
+    let is_dialog_playing = ctx
+      .dialog_player
+      .as_ref()
+      .is_some_and(|player| player.is_playing());
+
+    if is_dialog_playing {
+      if ui.button("Stop Conversation") {
+        Self::play(ctx, None);
+      }
+    } else {
+      if ui.button("Play Conversation") {
+        let node = self.graph.get_selected_node().unwrap();
+        let timeline = self.graph.get_selected_timeline().unwrap();
+        let dialog = timeline.export_to_dialog();
+        Self::play(
+          ctx,
+          Some((
+            node.name().as_str().into(),
+            vec![(node.name().as_str().into(), dialog)],
+          )),
+        );
+      }
+    }
+
+    ui.same_line();
+
+    if ui.button("(A)dd Container") || (ui.io().key_alt() && ui.is_key_pressed(Key::A)) {
+      ui.open_popup("Add Container");
+    }
+
+    if Self::modal(
+      ui,
+      "Add Container",
+      &mut self.new_modal_string,
+      &mut self.open_modal,
+    ) {
+      let timeline = self.graph.get_mut_selected_timeline().unwrap();
+      timeline.push_back_container(self.new_modal_string.clone());
+      self.new_modal_string.clear();
+    }
+
+    enum DeleteCommand {
+      Container(usize),
+      Block(usize, usize),
+    }
+
+    let mut pending_delete = None;
+    let mut pending_play = None;
+
+    if let Some(selected) = self
+      .graph
+      .get_mut_selected_timeline()
+      .unwrap()
+      .get_selected()
+    {
+      ui.same_line();
+      ui.separator_vertical();
+      ui.same_line();
+
+      // Selected
+      if ui.button("Play Container") {
+        match selected {
+          Selection::Block {
+            container_index, ..
+          } => {
+            pending_play = Some(container_index);
+          }
+          Selection::Container { index, .. } => {
+            pending_play = Some(index);
+          }
+        }
+      }
+
+      ui.same_line();
+
+      if ui.button("(D)elete") || (ui.io().key_alt() && ui.is_key_pressed(Key::D)) {
+        match &selected {
+          Selection::Block {
+            container_id,
+            block,
+            ..
+          } => {
+            pending_delete = Some(DeleteCommand::Block(*container_id, block.id));
+          }
+          Selection::Container { container, .. } => {
+            pending_delete = Some(DeleteCommand::Container(container.id));
+          }
+        }
+      }
+
+      match selected {
+        Selection::Block { .. } => {}
+        Selection::Container { container, .. } => {
+          ui.same_line();
+
+          ui.separator_vertical();
+
+          ui.same_line();
+
+          ui.text("Blocks:");
+
+          ui.same_line();
+          if ui.button("(T)ext") || (ui.io().key_alt() && ui.is_key_pressed(Key::T)) {
+            container.add_block(TimelineBlockType::Text(String::new()));
           }
 
-          let timeline = self.selected_timeline_id.unwrap();
-          let timeline = self.timelines.get_mut(&timeline).unwrap();
-
-          let is_dialog_playing = ctx
-            .dialog_player
-            .as_ref()
-            .is_some_and(|player| player.is_playing());
-
-          if is_dialog_playing {
-            if ui.button("Stop Conversation") {
-              Self::play(&mut ctx, None);
-            }
-          } else {
-            if ui.button("Play Conversation") {
-              let node = self
-                .graph
-                .get_node_by_id(self.selected_timeline_id.unwrap())
-                .unwrap();
-
-              let node_name = node.name();
-
-              let dialog = timeline.export_to_dialog();
-              Self::play(
-                &mut ctx,
-                Some((
-                  node_name.as_str().into(),
-                  vec![(node_name.as_str().into(), dialog)],
-                )),
-              );
-            }
+          ui.same_line();
+          if ui.button("(W)ait") || (ui.io().key_alt() && ui.is_key_pressed(Key::W)) {
+            container.add_block(TimelineBlockType::Wait(0.0));
           }
 
           ui.same_line();
 
-          if ui.button("(A)dd Container") || (ui.io().key_alt() && ui.is_key_pressed(Key::A)) {
-            ui.open_popup("Add Container");
+          if ui.button("(S)et") || (ui.io().key_alt() && ui.is_key_pressed(Key::S)) {
+            container.add_block(TimelineBlockType::Set(TimelineSetBlockType::default()));
           }
 
-          if Self::modal(
-            ui,
-            "Add Container",
-            &mut self.new_modal_string,
-            &mut self.open_modal,
-          ) {
-            timeline.push_back_container(self.new_modal_string.clone());
-            self.new_modal_string.clear();
+          ui.same_line();
+
+          if ui.button("(N)ext") || (ui.io().key_alt() && ui.is_key_pressed(Key::N)) {
+            container.add_block(TimelineBlockType::Next);
           }
+        }
+      }
+    }
 
-          enum DeleteCommand {
-            Container(usize),
-            Block(usize, usize),
-          }
+    if let Some(cmd) = pending_delete.take() {
+      let timeline = self.graph.get_mut_selected_timeline().unwrap();
+      match cmd {
+        DeleteCommand::Container(id) => timeline.delete_container(id),
+        DeleteCommand::Block(container_id, block_id) => {
+          timeline.delete_block(container_id, block_id)
+        }
+      }
+    }
 
-          let mut pending_delete = None;
-          let mut pending_play = None;
+    if let Some(idx) = pending_play.take() {
+      info!("Skipping to Conversation with Index {idx}...");
+      let node = self.graph.get_selected_node().unwrap();
+      let timeline = self.graph.get_selected_timeline().unwrap();
+      let dialog = timeline.export_to_dialog();
+      Self::play(
+        ctx,
+        Some((
+          node.name().as_str().into(),
+          vec![(node.name().as_str().into(), dialog)],
+        )),
+      );
+      ctx.dialog_player.as_mut().unwrap().skip(
+        idx,
+        ctx.animator,
+        ctx.dialog_mgr,
+        ctx.enummap,
+        ctx.motion_mgr,
+      );
+    }
 
-          if let Some(selected) = timeline.get_selected() {
-            ui.same_line();
-            ui.separator_vertical();
-            ui.same_line();
+    ui.separator();
 
-            // Selected
-            if ui.button("Play Container") {
-              match selected {
-                Selection::Block {
-                  container_index, ..
-                } => {
-                  pending_play = Some(container_index);
-                }
-                Selection::Container { index, .. } => {
-                  pending_play = Some(index);
-                }
-              }
-            }
+    ui.child_window("##timeline_canvas")
+      .size([0.0, 0.0])
+      .flags(WindowFlags::HORIZONTAL_SCROLLBAR)
+      .build(ui, || {
+        let idx = ctx.dialog_player.as_ref().and_then(|p| {
+          let dialog_name = p.current_dialog_name()?;
+          let current_node = self.graph.get_node_by_name(dialog_name)?;
 
-            ui.same_line();
-
-            if ui.button("(D)elete") || (ui.io().key_alt() && ui.is_key_pressed(Key::D)) {
-              match &selected {
-                Selection::Block {
-                  container_id,
-                  block,
-                  ..
-                } => {
-                  pending_delete = Some(DeleteCommand::Block(*container_id, block.id));
-                }
-                Selection::Container { container, .. } => {
-                  pending_delete = Some(DeleteCommand::Container(container.id));
-                }
-              }
-            }
-
-            match selected {
-              Selection::Block { .. } => {}
-              Selection::Container { container, .. } => {
-                ui.same_line();
-
-                ui.separator_vertical();
-
-                ui.same_line();
-
-                ui.text("Blocks:");
-
-                ui.same_line();
-                if ui.button("(T)ext") || (ui.io().key_alt() && ui.is_key_pressed(Key::T)) {
-                  container.add_block(TimelineBlockType::Text(String::new()));
-                }
-
-                ui.same_line();
-                if ui.button("(W)ait") || (ui.io().key_alt() && ui.is_key_pressed(Key::W)) {
-                  container.add_block(TimelineBlockType::Wait(0.0));
-                }
-
-                ui.same_line();
-
-                if ui.button("(S)et") || (ui.io().key_alt() && ui.is_key_pressed(Key::S)) {
-                  container.add_block(TimelineBlockType::Set(TimelineSetBlockType::default()));
-                }
-
-                ui.same_line();
-
-                if ui.button("(N)ext") || (ui.io().key_alt() && ui.is_key_pressed(Key::N)) {
-                  container.add_block(TimelineBlockType::Next);
-                }
-              }
-            }
-          }
-
-          if let Some(cmd) = pending_delete.take() {
-            match cmd {
-              DeleteCommand::Container(id) => timeline.delete_container(id),
-              DeleteCommand::Block(container_id, block_id) => {
-                timeline.delete_block(container_id, block_id)
-              }
-            }
-          }
-
-          if let Some(idx) = pending_play.take() {
-            info!("Skipping to Conversation with Index {idx}...");
-            let node = self
-              .graph
-              .get_node_by_id(self.selected_timeline_id.unwrap())
-              .unwrap();
-
-            let node_name = node.name();
-
-            let dialog = timeline.export_to_dialog();
-            Self::play(
-              &mut ctx,
-              Some((
-                node_name.as_str().into(),
-                vec![(node_name.as_str().into(), dialog)],
-              )),
-            );
-            ctx.dialog_player.as_mut().unwrap().skip(
-              idx,
-              ctx.animator,
-              ctx.dialog_mgr,
-              ctx.enummap,
-              ctx.motion_mgr,
-            );
-          }
-
-          ui.separator();
-
-          ui.child_window("##timeline_canvas")
-            .size([0.0, 0.0])
-            .flags(WindowFlags::HORIZONTAL_SCROLLBAR)
-            .build(ui, || {
-              let idx = ctx.dialog_player.as_ref().and_then(|p| {
-                let dialog_name = p.current_dialog_name()?;
-
-                let node = self.graph.get_node_by_name(dialog_name)?;
-
-                if node.id() == self.selected_timeline_id? {
-                  p.current_node_index()
-                } else {
-                  None
-                }
-              });
-
-              timeline.draw(ui, idx);
-            });
-        });
-
-        ui.window("Properties").build(|| {
-          if self.selected_timeline_id.is_none() {
-            return;
-          }
-
-          let timeline = self.selected_timeline_id.unwrap();
-          let timeline = self.timelines.get_mut(&timeline).unwrap();
-
-          if let Some(selected) = timeline.get_selected() {
-            match selected {
-              Selection::Container { container, .. } => {
-                ui.text("Who?");
-                ui.same_line();
-                ui.input_text(format!("##container_{}", container.id), &mut container.name)
-                  .build();
-              }
-              Selection::Block {
-                block,
-                container_id,
-                ..
-              } => match &mut block.value {
-                TimelineBlockType::Text(text) => {
-                  ui.text("Text:");
-                  ui.same_line();
-                  ui.set_next_item_width(-1.0);
-                  ui.input_text(format!("##{}_{}_text", container_id, block.id), text)
-                    .build();
-                }
-                TimelineBlockType::Wait(seconds) => {
-                  ui.text("Wait:");
-                  ui.same_line();
-
-                  ui.input_float_config("##wait_seconds")
-                    .step(0.05)
-                    .build(seconds);
-
-                  ui.same_line();
-                  ui.text("seconds");
-                }
-                TimelineBlockType::Set(TimelineSetBlockType {
-                  parameters,
-                  anim,
-                  view,
-                }) => {
-                  let mut remove_index: Option<usize> = None;
-                  let mut move_index: Option<(usize, isize)> = None; // (idx, offset: -1 sube, +1 baja)
-
-                  // ANIMATION
-                  ui.text("Animation");
-                  ui.separator();
-                  ui.checkbox("Loop?", &mut anim.1);
-                  ui.same_line();
-
-                  Self::combo_box(
-                    ui,
-                    &mut anim.0,
-                    "##anim_combo",
-                    ctx.motion_mgr.names(),
-                    &self.unchanged,
-                    self.empty.clone(),
-                  );
-
-                  ui.text("View");
-                  ui.separator();
-
-                  // VIEW
-                  Self::combo_box(
-                    ui,
-                    view,
-                    "##view_combo",
-                    ctx.enummap.views.keys(),
-                    &self.unchanged,
-                    self.empty.clone(),
-                  );
-
-                  ui.spacing();
-                  ui.text("Parameters");
-                  ui.separator();
-                  for (idx, entry) in parameters.iter_mut().enumerate() {
-                    let _id = ui.push_id(idx as i32);
-
-                    if ui.button("X") {
-                      remove_index = Some(idx);
-                    }
-
-                    ui.same_line();
-
-                    if ui.button("^") {
-                      move_index = Some((idx, -1));
-                    }
-                    ui.same_line();
-
-                    if ui.button("v") {
-                      move_index = Some((idx, 1));
-                    }
-                    ui.same_line();
-
-                    ui.text(&entry.0);
-                    ui.same_line();
-                    ui.set_next_item_width(-10.0);
-                    match ctx.enummap.enums.get(&entry.0) {
-                      Some(enumtype) => {
-                        if let Some(_) =
-                          ui.begin_combo(format!("##{}_{}", &entry.0, &entry.1), &entry.1)
-                        {
-                          for value in enumtype
-                            .values
-                            .iter()
-                            .map(|v| v.0)
-                            .chain(std::iter::once(&self.non_control))
-                          {
-                            let selected = entry.1 == *value;
-                            if ui.selectable_config(value).selected(selected).build() {
-                              entry.1 = value.clone();
-                            }
-                          }
-                        }
-                      }
-                      None => ui.text("Unknown Enum"),
-                    }
-                  }
-
-                  if let Some((idx, offset)) = move_index {
-                    let target = idx as isize + offset;
-                    if target >= 0 && (target as usize) < parameters.len() {
-                      parameters.swap(idx, target as usize);
-                    }
-                  }
-                  if let Some(idx) = remove_index {
-                    parameters.remove(idx);
-                  }
-
-                  ui.spacing();
-                  // --- Botón "+" al final: abre un combobox para elegir qué agregar ---
-                  if ui.button_with_size("+", [ui.content_region_avail()[0], 0.0]) {
-                    ui.open_popup("##add_entry_popup");
-                  }
-                  if let Some(_) = ui.begin_popup("##add_entry_popup") {
-                    let mut params: Vec<_> = ctx.enummap.enums.iter().collect();
-                    params.sort_unstable_by_key(|&p| p.0);
-                    for (prop_name, prop_value) in params {
-                      if ui.selectable_config(prop_name).size([0.0, 0.0]).build() {
-                        parameters.push((
-                          prop_name.clone(),
-                          prop_value.values.iter().next().unwrap().0.clone(),
-                        ));
-                        ui.close_current_popup();
-                      }
-                    }
-                  }
-                }
-                TimelineBlockType::Next => {}
-              },
-            }
+          if self.graph.get_selected_node_id().unwrap() == current_node.id() {
+            p.current_node_index()
+          } else {
+            None
           }
         });
+
+        let timeline = self.graph.get_mut_selected_timeline().unwrap();
+        timeline.draw(ui, idx);
       });
   }
 
@@ -827,11 +789,6 @@ impl Layout {
         info!("Stoping Conversation...");
       }
     }
-  }
-
-  fn reset_graph_selection(&mut self) {
-    self.selected_node_id = None;
-    self.selected_timeline_id = None;
   }
 
   fn draw_float_property(

@@ -29,7 +29,7 @@ pub struct EnumType {
   pub values: HashMap<Rc<str>, Vec<ParamValue>>,
 }
 /// Ver "assets/example.map" para un ejemplo
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ParamValue {
   pub name: Rc<str>,
   pub value: Value,
@@ -38,14 +38,14 @@ pub struct ParamValue {
   pub modification: Option<Modification>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Modification {
   pub lhs: Rc<str>,
   pub rhs: Rc<str>,
   pub then: f32,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
 pub enum Value {
   Fixed(f32),
   Smooth {
@@ -354,7 +354,7 @@ pub struct MotionManager(HashMap<Rc<str>, Motion>);
 
 impl MotionManager {
   pub fn new(path: &PathBuf, model3: &cubism::json::model::Model3) -> anyhow::Result<Self> {
-    let motions = model3
+    /*let motions = model3
       .file_references
       .motions
       .idle
@@ -370,8 +370,8 @@ impl MotionManager {
 
         Ok((name.into(), motion))
       })
-      .collect::<anyhow::Result<HashMap<_, _>>>()?;
-    // let motions = HashMap::new();
+      .collect::<anyhow::Result<HashMap<_, _>>>()?;*/
+    let motions = HashMap::new();
 
     Ok(Self(motions))
   }

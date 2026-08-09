@@ -7,7 +7,6 @@ use crate::{
   dialog::parser::{Dialog, Event, Token, dialog_parser},
   live2d::animator::{Animator, EnumMap, MotionManager, ParamValue, ParameterChange, Value},
 };
-use anyhow::Context;
 use chumsky::Parser;
 use log::{debug, warn};
 
@@ -265,51 +264,7 @@ impl DialogPlayer {
       self.state = PlayerState::Running;
     }
 
-    let parameters: Vec<_> = pending_enums
-      .iter()
-      .map(|pending_enum| {
-        let params: Vec<_> = pending_enum
-          .2
-          .iter()
-          .map(|p| {
-            let inc = p
-              .modification
-              .as_ref()
-              .map(|m| {
-                if animator.is_enum_active(&m.lhs, &m.rhs)
-                  || pending_enums
-                    .iter()
-                    .find(|e| e.0 == &m.lhs && e.1 == &m.rhs)
-                    .is_some()
-                {
-                  m.then
-                } else {
-                  0.0
-                }
-              })
-              .unwrap_or(0.0);
-
-            let value = match p.value {
-              Value::Fixed(v) => Value::Fixed(v + inc),
-              Value::Smooth { target, step, .. } => Value::Smooth {
-                actual: 0.0,
-                target: target + inc,
-                step,
-              },
-            };
-
-            (p.name.clone(), value)
-          })
-          .collect();
-
-        ParameterChange {
-          enumtype: pending_enum.0.clone(),
-          enumname: pending_enum.1.clone(),
-          params,
-        }
-      })
-      .collect();
-
+    let parameters = Self::calculate_parameters(&pending_enums, animator);
     for p in parameters {
       animator.set_parameter_change(p);
     }
@@ -511,7 +466,45 @@ impl DialogPlayer {
       self.change_iter(Some(next));
     }
 
-    let parameters: Vec<_> = pending_enums
+    let parameters = Self::calculate_parameters(&pending_enums, animator);
+    for p in parameters {
+      if pending_animation.is_some() {
+        animator.deferred_set_parameter(p);
+      } else {
+        animator.set_parameter_change(p);
+      }
+    }
+
+    for e in pending_remove_enums {
+      if pending_animation.is_some() {
+        animator.deferred_remove_enum(e.clone());
+      } else {
+        animator.remove_enum(e, enum_map);
+      }
+    }
+
+    if let Some((motion, looped)) = pending_animation.take() {
+      animator.play_motion(motion, looped);
+    }
+  }
+
+  fn change_iter(&mut self, opt_iter: Option<DialogIter>) {
+    self.current_node_idx = 0;
+    match opt_iter {
+      Some(iter) => {
+        self.iter = Some(iter);
+      }
+      None => {
+        self.iter = None;
+      }
+    }
+  }
+
+  fn calculate_parameters(
+    pending_enums: &Vec<(&Rc<str>, &Rc<str>, &Vec<ParamValue>)>,
+    animator: &Animator,
+  ) -> Vec<ParameterChange> {
+    pending_enums
       .iter()
       .map(|pending_enum| {
         let params: Vec<_> = pending_enum
@@ -554,38 +547,6 @@ impl DialogPlayer {
           params,
         }
       })
-      .collect();
-
-    for p in parameters {
-      if pending_animation.is_some() {
-        animator.deferred_set_parameter(p);
-      } else {
-        animator.set_parameter_change(p);
-      }
-    }
-
-    for e in pending_remove_enums {
-      if pending_animation.is_some() {
-        animator.deferred_remove_enum(e.clone());
-      } else {
-        animator.remove_enum(e, enum_map);
-      }
-    }
-
-    if let Some((motion, looped)) = pending_animation.take() {
-      animator.play_motion(motion, looped);
-    }
-  }
-
-  fn change_iter(&mut self, opt_iter: Option<DialogIter>) {
-    self.current_node_idx = 0;
-    match opt_iter {
-      Some(iter) => {
-        self.iter = Some(iter);
-      }
-      None => {
-        self.iter = None;
-      }
-    }
+      .collect()
   }
 }

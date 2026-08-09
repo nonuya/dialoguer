@@ -590,6 +590,7 @@ dependencies = [
  "log",
  "natord",
  "raw-window-handle",
+ "undoredo",
  "winit",
 ]
 
@@ -1058,6 +1059,26 @@ name = "log"
 version = "0.4.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
+
+[[package]]
+name = "maplike"
+version = "0.13.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df7dd66e7f64866e84c4041887c8727831f4cff5d403c53210208c50376601dd"
+dependencies = [
+ "maplike_derive",
+]
+
+[[package]]
+name = "maplike_derive"
+version = "0.13.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2335148680c008dda3b545758728bb909fb23e3f73def790efdb922eab0e6133"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.3",
+]
 
 [[package]]
 name = "matchers"
@@ -2108,6 +2129,15 @@ name = "typeid"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bc7d623258602320d5c55d1bc22793b57daff0ec7efc270ea7d55ce1d5f5471c"
+
+[[package]]
+name = "undoredo"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08fd4edb191c2d9173861139daaffd2e1d75f35d9ff9f7558f374b35d336bd03"
+dependencies = [
+ "maplike",
+]
 
 [[package]]
 name = "unicode-ident"

@@ -6,19 +6,52 @@ use std::{
 use anyhow::Context;
 use dear_imgui_rs::*;
 use dear_node_editor::*;
-use log::warn;
+use log::{debug, warn};
+use undoredo::UndoRedo;
 
+use crate::timeline::Timeline;
+
+#[derive(Clone)]
+pub enum Command {
+  AddNodeConversation(Node, Timeline),
+  AddNodeChoicer(Node),
+  RemoveNode {
+    index: usize,
+    node: Node,
+    flow_links: Vec<Link>,
+    links: Vec<Link>,
+    timeline: Option<Timeline>,
+  },
+  AddLink {
+    link: Link,
+    replaced: Option<Link>,
+  },
+  AddFlowLink {
+    link: Link,
+    replaced: Option<Link>,
+  },
+  RemoveLink {
+    index: usize,
+    link: Link,
+  },
+  RemoveFlowLink {
+    index: usize,
+    link: Link,
+  },
+}
 pub struct Graph {
   nodes: Vec<Node>,
+  timelines: HashMap<NodeId, Timeline>,
   links: Vec<Link>,
   flow_links: Vec<Link>,
   flow_link_editing: bool,
   id_gen: IdGen,
   selected_node_id: Option<NodeId>,
   first_frame: bool,
+  history: UndoRedo<(), Command>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Node {
   Conversation {
     id: NodeId,
@@ -61,7 +94,8 @@ impl Node {
 }
 
 // FIXME: Cambiar a HashMap
-struct Link {
+#[derive(Clone)]
+pub struct Link {
   id: LinkId,
   from: PinId,
   to: PinId,
@@ -111,9 +145,7 @@ struct OrderedNode {
 }
 
 impl Graph {
-  pub fn new(
-    dialog_mgr: &core::dialog::DialogManager,
-  ) -> (HashMap<NodeId, crate::timeline::Timeline>, Self) {
+  pub fn new(dialog_mgr: &core::dialog::DialogManager) -> Self {
     let mut id_gen = IdGen::new();
     let (timelines, mut nodes, info_by_id) = Self::create_nodes(dialog_mgr, &mut id_gen);
     let (links, flow_links) = Self::create_links(dialog_mgr, &mut id_gen, info_by_id);
@@ -127,18 +159,18 @@ impl Graph {
       let order = Self::order_group(group, &links, &pin_to_node);
       cursor = Self::layout_group(&order, &mut nodes, cursor);
     }
-    (
+
+    Self {
+      selected_node_id: None,
+      flow_link_editing: false,
+      nodes,
+      flow_links,
+      history: UndoRedo::new(),
       timelines,
-      Self {
-        selected_node_id: None,
-        flow_link_editing: false,
-        nodes,
-        flow_links,
-        links,
-        id_gen,
-        first_frame: true,
-      },
-    )
+      links,
+      id_gen,
+      first_frame: true,
+    }
   }
 
   fn create_nodes(
@@ -443,17 +475,133 @@ impl Graph {
     ]
   }
 
+  pub fn undo(&mut self) {
+    if let Some(cmd) = self.history.undo_command() {
+      match cmd {
+        Command::AddNodeConversation(node, _) => {
+          debug!("[UndoHistory] Undoing Add Node");
+          self.timelines.remove(&node.id());
+          self.nodes.pop();
+        }
+        Command::AddNodeChoicer(_) => {
+          self.nodes.pop();
+        }
+        Command::RemoveNode {
+          index,
+          node,
+          links,
+          flow_links,
+          timeline,
+        } => {
+          if let Some(timeline) = timeline {
+            self.timelines.insert(node.id(), timeline);
+          }
+          self.nodes.insert(index, node);
+          self.links.extend(links);
+          self.flow_links.extend(flow_links);
+        }
+        Command::AddLink { link, replaced } => {
+          self.links.retain(|l| l.id != link.id);
+          if let Some(replaced) = replaced {
+            self.links.push(replaced);
+          }
+        }
+        Command::AddFlowLink { link, replaced } => {
+          self.flow_links.retain(|l| l.id != link.id);
+          if let Some(replaced) = replaced {
+            self.flow_links.push(replaced);
+          }
+        }
+        Command::RemoveLink { index, link } => {
+          let index = index.min(self.links.len());
+          self.links.insert(index, link);
+        }
+        Command::RemoveFlowLink { index, link } => {
+          let index = index.min(self.flow_links.len());
+          self.flow_links.insert(index, link);
+        }
+      }
+    }
+  }
+  pub fn redo(&mut self) {
+    if let Some(cmd) = self.history.redo_command() {
+      match cmd {
+        Command::AddNodeConversation(node, timeline) => {
+          debug!("[UndoHistory] Redoing Add Node");
+          assert!(self.timelines.insert(node.id(), timeline).is_none());
+          self.nodes.push(node);
+        }
+        Command::AddNodeChoicer(node) => {
+          self.nodes.push(node);
+        }
+        Command::RemoveNode {
+          index,
+          links,
+          flow_links,
+          timeline,
+          node,
+        } => {
+          if timeline.is_some() {
+            self.timelines.remove(&node.id());
+          }
+
+          self.nodes.remove(index);
+          self.links.retain(|link| {
+            !links
+              .iter()
+              .any(|removed| removed.from == link.from && removed.to == link.to)
+          });
+          self.flow_links.retain(|link| {
+            !flow_links
+              .iter()
+              .any(|removed| removed.from == link.from && removed.to == link.to)
+          });
+        }
+        Command::AddLink { link, replaced } => {
+          if let Some(replaced) = replaced {
+            self.links.retain(|l| l.id != replaced.id);
+          }
+          self.links.push(link);
+        }
+        Command::AddFlowLink { link, replaced } => {
+          if let Some(replaced) = replaced {
+            self.flow_links.retain(|l| l.id != replaced.id);
+          }
+          self.flow_links.push(link);
+        }
+        Command::RemoveLink { link, .. } => {
+          self.links.retain(|l| l.id != link.id);
+        }
+        Command::RemoveFlowLink { link, .. } => {
+          self.flow_links.retain(|l| l.id != link.id);
+        }
+      }
+    }
+  }
   fn add_conversation(&mut self, name: String) -> NodeId {
-    let id = self.id_gen.next_node();
+    let id = self.id_gen.next_node(); // Ignoring this because IDs have usize type so you have to put a lot of nodes
     let input = self.id_gen.next_pin();
     let output = self.id_gen.next_pin();
-    self.nodes.push(Node::Conversation {
+
+    let node = Node::Conversation {
       id,
       name,
       input,
       output,
       position: [0.0, 0.0],
-    });
+    };
+
+    assert!(
+      self
+        .timelines
+        .insert(node.id(), Timeline::new_empty())
+        .is_none()
+    );
+    self.nodes.push(node.clone());
+    self
+      .history
+      .command(Command::AddNodeConversation(node, Timeline::new_empty()));
+
     id
   }
 
@@ -462,14 +610,18 @@ impl Graph {
     let input = self.id_gen.next_pin();
     let options = Vec::new();
     let outputs = options.iter().map(|_| self.id_gen.next_pin()).collect();
-    self.nodes.push(Node::Choicer {
+    let node = Node::Choicer {
       id,
       name,
       options,
       input,
       outputs,
       position: [0.0, 0.0],
-    });
+    };
+
+    self.history.command(Command::AddNodeChoicer(node.clone()));
+    self.nodes.push(node);
+
     id
   }
 
@@ -490,43 +642,25 @@ impl Graph {
     ui: &Ui,
     node_editor: &EditorContext,
     current_dialog_name: Option<&Rc<str>>,
-    on_add_node: impl FnOnce(NodeId) -> (),
-    on_selected_node: impl FnOnce(Option<NodeId>) -> (),
-    on_deleted_node: impl FnOnce(NodeId) -> (),
   ) {
-    let mut pending_deleting = None;
+    let mut pending_deleting = false;
 
     if !self.flow_link_editing {
-      if ui.button("Add Conversation (Z)") || (ui.io().key_alt() && ui.is_key_pressed(Key::Z)) {
-        on_add_node(self.add_conversation(format!("Conversation {}", self.id_gen.0)));
+      if ui.button("Add Conversation") {
+        self.add_conversation(format!("Conversation {}", self.id_gen.0));
       }
       ui.same_line();
-      if ui.button("Add Choicer (X)") || (ui.io().key_alt() && ui.is_key_pressed(Key::X)) {
+      if ui.button("Add Choicer") {
         self.add_choicer(format!("Choicer {}", self.id_gen.0));
       }
 
       if let Some(id) = self.selected_node_id {
         ui.same_line();
 
-        if ui.button("(D)elete") || (ui.io().key_alt() && ui.is_key_pressed(Key::D)) {
+        if ui.button("(D)elete") {
           if let Some(index) = self.nodes.iter().position(|n| n.id() == id) {
-            let pins: Vec<PinId> = match &self.nodes[index] {
-              Node::Conversation { input, output, .. } => {
-                vec![*input, *output]
-              }
-              Node::Choicer { input, outputs, .. } => {
-                let mut pins = Vec::with_capacity(outputs.len() + 1);
-                pins.push(*input);
-                pins.extend(outputs.iter().copied());
-                pins
-              }
-            };
-
-            self
-              .links
-              .retain(|link| !pins.contains(&link.from) && !pins.contains(&link.to));
-
-            pending_deleting = Some(index);
+            self.delete_node(index);
+            pending_deleting = true;
           }
         }
       }
@@ -536,28 +670,70 @@ impl Graph {
     }
 
     ui.same_line();
-    if ui.button(if !self.flow_link_editing {"Toggle Flow Link"} else {"Toggle Link"}) {
+    if ui.button(if !self.flow_link_editing {
+      "Toggle Flow Link"
+    } else {
+      "Toggle Link"
+    }) {
       self.flow_link_editing = !self.flow_link_editing;
     }
 
-    self.draw_graph(
-      ui,
-      &node_editor,
-      current_dialog_name,
-      pending_deleting,
-      on_selected_node,
-      on_deleted_node,
-    );
+    self.draw_graph(ui, &node_editor, current_dialog_name, pending_deleting);
   }
 
+  fn delete_node(&mut self, index: usize) {
+    let pins: Vec<PinId> = match &self.nodes[index] {
+      Node::Conversation { input, output, .. } => {
+        vec![*input, *output]
+      }
+      Node::Choicer { input, outputs, .. } => {
+        let mut pins = Vec::with_capacity(outputs.len() + 1);
+        pins.push(*input);
+        pins.extend(outputs.iter().copied());
+        pins
+      }
+    };
+    let node = self.nodes[index].clone();
+
+    let links: Vec<Link> = self
+      .links
+      .iter()
+      .filter(|link| pins.contains(&link.from) || pins.contains(&link.to))
+      .cloned()
+      .collect();
+
+    let flow_links: Vec<Link> = self
+      .flow_links
+      .iter()
+      .filter(|link| pins.contains(&link.from) || pins.contains(&link.to))
+      .cloned()
+      .collect();
+
+    let timeline = self.timelines.get(&node.id()).cloned();
+
+    self.timelines.remove(&node.id());
+    self
+      .links
+      .retain(|link| !pins.contains(&link.from) && !pins.contains(&link.to));
+    self
+      .flow_links
+      .retain(|link| !pins.contains(&link.from) && !pins.contains(&link.to));
+    self.nodes.remove(index);
+
+    self.history.command(Command::RemoveNode {
+      index,
+      node,
+      links,
+      flow_links,
+      timeline,
+    });
+  }
   pub fn draw_graph(
     &mut self,
     ui: &Ui,
     node_editor: &EditorContext,
     current_dialog_name: Option<&Rc<str>>,
-    mut pending_deleting: Option<usize>,
-    on_selected_node: impl FnOnce(Option<NodeId>) -> (),
-    on_deleted_node: impl FnOnce(NodeId) -> (),
+    pending_deleting: bool,
   ) {
     let editor = ui.node_editor(node_editor, "DialogueGraph", [0.0, 0.0]);
     let mut pending_new_option: Option<NodeId> = None;
@@ -680,22 +856,36 @@ impl Graph {
       if let Some((a, b)) = create.query_new_link() {
         if let Some((from, to)) = self.normalize_link(a, b) {
           if create.accept_new_item() {
-            // Un pin de salida solo puede tener un link activo: si ya
-            // existía uno desde ese `from`, lo reemplaza.
             if self.flow_link_editing {
-              self.flow_links.retain(|link| link.from != from);
-              self.flow_links.push(Link {
+              let replaced = self
+                .flow_links
+                .iter()
+                .position(|link| link.from == from)
+                .map(|i| self.flow_links.remove(i));
+
+              let link = Link {
                 id: self.id_gen.next_link(),
                 from,
                 to,
-              });
+              };
+              self.flow_links.push(link.clone());
+              self
+                .history
+                .command(Command::AddFlowLink { link, replaced });
             } else {
-              self.links.retain(|link| link.from != from);
-              self.links.push(Link {
+              let replaced = self
+                .links
+                .iter()
+                .position(|link| link.from == from)
+                .map(|i| self.links.remove(i));
+
+              let link = Link {
                 id: self.id_gen.next_link(),
                 from,
                 to,
-              });
+              };
+              self.links.push(link.clone());
+              self.history.command(Command::AddLink { link, replaced });
             }
           }
         } else {
@@ -704,14 +894,19 @@ impl Graph {
       }
     }
 
-    // --- Eliminar links con click derecho / tecla Delete sobre el link ---
     if let Some(delete) = editor.begin_delete() {
       while let Some((link_id, _, _)) = delete.query_deleted_link() {
         if delete.accept_deleted_item(true) {
           if self.flow_link_editing {
-            self.flow_links.retain(|link| link.id != link_id);
-          } else {
-            self.links.retain(|link| link.id != link_id);
+            if let Some(index) = self.flow_links.iter().position(|l| l.id == link_id) {
+              let link = self.flow_links.remove(index);
+              self
+                .history
+                .command(Command::RemoveFlowLink { index, link });
+            }
+          } else if let Some(index) = self.links.iter().position(|l| l.id == link_id) {
+            let link = self.links.remove(index);
+            self.history.command(Command::RemoveLink { index, link });
           }
         }
       }
@@ -719,16 +914,12 @@ impl Graph {
         delete.reject_deleted_item();
       }
     }
-
     // --- Aplicar el "+" pendiente después de terminar el frame del editor ---
     if let Some(node_id) = pending_new_option {
       self.add_choicer_option(node_id, "Text".into());
     }
 
-    if let Some(index) = pending_deleting.take() {
-      on_deleted_node(self.nodes[index].id());
-      self.nodes.remove(index);
-      self.selected_node_id = None;
+    if pending_deleting {
       editor.clear_selection();
     }
 
@@ -739,10 +930,23 @@ impl Graph {
 
     if self.selected_node_id != current_selection {
       self.selected_node_id = current_selection;
-      on_selected_node(current_selection);
     }
 
     editor.end();
+  }
+
+  pub fn get_selected_node_id(&self) -> Option<NodeId> {
+    self.selected_node_id
+  }
+
+  pub fn get_selected_node(&self) -> Option<&Node> {
+    self.selected_node_id.and_then(|id| self.get_node_by_id(id))
+  }
+
+  pub fn get_mut_selected_node(&mut self) -> Option<&mut Node> {
+    self
+      .selected_node_id
+      .and_then(|id| self.get_mut_node_by_id(id))
   }
 
   pub fn get_node_by_id(&self, id: NodeId) -> Option<&Node> {
@@ -751,6 +955,20 @@ impl Graph {
 
   pub fn get_mut_node_by_id(&mut self, id: NodeId) -> Option<&mut Node> {
     self.nodes.iter_mut().find(|n| n.id() == id)
+  }
+
+  pub fn has_node_a_timeline(&self, id: NodeId) -> bool {
+    self.timelines.contains_key(&id)
+  }
+
+  pub fn get_selected_timeline(&self) -> Option<&Timeline> {
+    self.selected_node_id.and_then(|id| self.timelines.get(&id))
+  }
+
+  pub fn get_mut_selected_timeline(&mut self) -> Option<&mut Timeline> {
+    self
+      .selected_node_id
+      .and_then(|id| self.timelines.get_mut(&id))
   }
 
   /// Determina cuál de los dos pines involucrados en un drag es el de
@@ -795,7 +1013,6 @@ impl Graph {
   pub fn export_to_dialog(
     &self,
     id: NodeId,
-    timelines: &HashMap<NodeId, crate::timeline::Timeline>,
   ) -> anyhow::Result<Vec<(Rc<str>, core::dialog::Dialog)>> {
     use core::dialog::{Dialog, DialogNode, Event};
     use std::collections::{HashSet, VecDeque};
@@ -816,12 +1033,9 @@ impl Graph {
 
       match node {
         Node::Conversation {
-          id,
-          name,
-          output,
-          ..
+          id, name, output, ..
         } => {
-          let timeline = timelines.get(id).context("Failed to get Timeline")?;
+          let timeline = self.timelines.get(id).context("Failed to get Timeline")?;
           let mut dialog = timeline.export_to_dialog();
 
           // Si tiene un nodo de salida
@@ -844,8 +1058,12 @@ impl Graph {
           if let Some(next) = self.flow_follow(*output) {
             match &mut dialog {
               Dialog::Conversation(nodes) => {
-                nodes.get_mut(0).context("Empty node")?.events.insert(0, Event::SetMainChoicer(next.name().as_str().into()));
-              },
+                nodes
+                  .get_mut(0)
+                  .context("Empty node")?
+                  .events
+                  .insert(0, Event::SetMainChoicer(next.name().as_str().into()));
+              }
               Dialog::Choicer(_) => {
                 unreachable!();
               }

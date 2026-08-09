@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
 use dear_imgui_rs::*;
+use undoredo::maplike::Container;
 
 const BLOCK_WIDTH: f32 = 50.0;
 const BLOCK_HEIGHT: f32 = 40.0;
@@ -9,6 +10,7 @@ const CONTAINER_PADDING: f32 = 6.0;
 const SELECTED_COLOR: [f32; 4] = [1.0, 1.0, 0.0, 1.0];
 const CONTAINER_SPACING: f32 = 6.0;
 
+#[derive(Clone)]
 pub enum TimelineBlockType {
   Set(TimelineSetBlockType),
   Text(String),
@@ -16,7 +18,7 @@ pub enum TimelineBlockType {
   Next,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct TimelineSetBlockType {
   pub parameters: Vec<(Rc<str>, Rc<str>)>, // EnumName ValueName
   pub anim: (Rc<str>, bool),
@@ -31,6 +33,7 @@ impl TimelineSetBlockType {
   }
 }
 
+#[derive(Clone)]
 pub struct TimelineBlock {
   pub id: usize,
   pub value: TimelineBlockType,
@@ -85,6 +88,7 @@ impl TimelineBlock {
   }
 }
 
+#[derive(Clone)]
 pub struct Container {
   pub id: usize,
   pub name: String,
@@ -140,6 +144,7 @@ impl Container {
   }
 }
 
+#[derive(Clone)]
 struct BlockDragState {
   container_idx: usize,
   block_idx: usize,
@@ -147,6 +152,7 @@ struct BlockDragState {
   current_x: f32,
 }
 
+#[derive(Clone)]
 struct ContainerDragState {
   container_idx: usize,
   offset_x: f32,
@@ -167,6 +173,7 @@ pub enum Selection<'a> {
   },
 }
 
+#[derive(Clone)]
 pub struct Timeline {
   containers: Vec<Container>,
   drag: Option<BlockDragState>,
