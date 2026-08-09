@@ -1,7 +1,6 @@
 use std::rc::Rc;
 
 use dear_imgui_rs::*;
-use undoredo::maplike::Container;
 
 const BLOCK_WIDTH: f32 = 50.0;
 const BLOCK_HEIGHT: f32 = 40.0;

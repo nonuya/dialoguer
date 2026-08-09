@@ -7,6 +7,7 @@ Dialogue system for Rust using OpenGL & Live2D.
 + Parameter Changes based on events.
 + Smooth and Fixed Parameter Changes.
 + Visual Editor with Graph and Parameter Editor (See [Editor](#editor)).
++ Undo/Redo for Graph Editor
 
 ## Texture Compression
 Use below command for create an ASTC texture.

@@ -1,12 +1,8 @@
 use dear_imgui_rs::*;
-use dear_node_editor::NodeId;
 use log::{info, warn};
-use std::{collections::HashMap, rc::Rc};
+use std::rc::Rc;
 
-use crate::{
-  graph::Graph,
-  timeline::{Selection, Timeline, TimelineBlockType, TimelineSetBlockType},
-};
+use crate::{graph, timeline};
 
 pub struct EditorContext<'a> {
   pub model: &'a mut core::live2d::Model,
@@ -22,13 +18,16 @@ pub struct Layout {
   new_modal_string: String,
   open_modal: bool,
   node_editor: dear_node_editor::EditorContext,
-  graph: Graph,
+  graph: graph::Graph,
   is_main_layout: bool,
   selected_enum: Option<(Rc<str>, Rc<str>)>,
   enumlog: Vec<(Rc<str>, Rc<str>)>,
   non_control: Rc<str>,
   unchanged: Rc<str>,
   empty: Rc<str>,
+  copied_block: Option<timeline::TimelineBlock>,
+  copied_container: Option<timeline::Container>,
+  copied_node: Option<graph::Node>,
 }
 
 impl Layout {
@@ -43,11 +42,14 @@ impl Layout {
       enumlog: Vec::new(),
       is_main_layout: true,
       open_modal: false,
-      graph: Graph::new(dialog_mgr),
+      graph: graph::Graph::new(dialog_mgr),
       new_modal_string: String::new(),
       non_control: "NonControl".into(),
       unchanged: "(Unchanged)".into(),
       empty: "".into(),
+      copied_block: None,
+      copied_container: None,
+      copied_node: None,
     }
   }
 
@@ -392,6 +394,8 @@ impl Layout {
       .get_mut_selected_timeline()
       .and_then(|t| t.get_selected())
     {
+      use timeline::{Selection, TimelineBlockType, TimelineSetBlockType};
+
       match selected {
         Selection::Container { container, .. } => {
           ui.text("Who?");
@@ -596,6 +600,8 @@ impl Layout {
     }
 
     let mut pending_delete = None;
+    let mut pending_paste_block = None;
+    let mut pending_paste_container = None;
     let mut pending_play = None;
 
     if let Some(selected) = self
@@ -607,6 +613,7 @@ impl Layout {
       ui.same_line();
       ui.separator_vertical();
       ui.same_line();
+      use timeline::{Selection, TimelineBlockType, TimelineSetBlockType};
 
       // Selected
       if ui.button("Play Container") {
@@ -640,8 +647,24 @@ impl Layout {
       }
 
       match selected {
-        Selection::Block { .. } => {}
-        Selection::Container { container, .. } => {
+        Selection::Block {
+          block,
+          container_index,
+          ..
+        } => {
+          if ui.is_window_focused() {
+            if ui.io().key_ctrl() && ui.is_key_pressed(Key::C) {
+              self.copied_block = Some(block.clone());
+            }
+
+            if ui.io().key_ctrl() && ui.is_key_pressed(Key::V) {
+              if let Some(copied) = self.copied_block.as_ref() {
+                pending_paste_block = Some((container_index, block.id, copied));
+              }
+            }
+          }
+        }
+        Selection::Container { container, index } => {
           ui.same_line();
 
           ui.separator_vertical();
@@ -671,6 +694,18 @@ impl Layout {
           if ui.button("(N)ext") || (ui.io().key_alt() && ui.is_key_pressed(Key::N)) {
             container.add_block(TimelineBlockType::Next);
           }
+
+          if ui.is_window_focused() {
+            if ui.io().key_ctrl() && ui.is_key_pressed(Key::C) {
+              self.copied_container = Some(container.clone());
+            }
+
+            if ui.io().key_ctrl() && ui.is_key_pressed(Key::V) {
+              if let Some(copied) = self.copied_container.as_ref() {
+                pending_paste_container = Some((index, copied));
+              }
+            }
+          }
         }
       }
     }
@@ -683,6 +718,14 @@ impl Layout {
           timeline.delete_block(container_id, block_id)
         }
       }
+    }
+
+    if let Some(cmd) = pending_paste_container.take() {
+      unimplemented!("Implementar copia aqui");
+    }
+
+    if let Some(cmd) = pending_paste_block.take() {
+      unimplemented!("Implementar paste aqui");
     }
 
     if let Some(idx) = pending_play.take() {
