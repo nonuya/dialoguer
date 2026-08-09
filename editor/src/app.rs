@@ -3,8 +3,6 @@ use chumsky::Parser;
 use core::renderer::RenderContext;
 use dear_imgui_glow::GlowRenderer;
 use dear_imgui_rs::*;
-use glam::vec3;
-use glow::HasContext;
 use std::{
   fs::{self, File},
   path::PathBuf,
@@ -118,7 +116,7 @@ impl App {
       );
     }
 
-    self.animator.update(deltatime, &mut self.model);
+    self.animator.update(deltatime, &mut self.model, &self.enummap);
   }
 
   pub fn draw(&mut self, ui: &mut Ui) {

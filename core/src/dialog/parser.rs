@@ -143,7 +143,7 @@ pub enum Event {
   SetView(Rc<str>),
   Jump(Rc<str>),
   SetParameter(Rc<str>, Rc<str>),
-  RemoveParamater(Rc<str>),
+  RemoveEnum(Rc<str>),
   Wait(f32),
   Next,
 }
@@ -172,7 +172,7 @@ pub fn dialog_parser<'a>()
         "ViewType" => Event::SetView(value.into()),
         _ => {
           if value == "NonAction" || value == "NonControl" {
-            Event::RemoveParamater(r#enum.into())
+            Event::RemoveEnum(r#enum.into())
           } else {
             Event::SetParameter(r#enum.into(), value.into())
           }

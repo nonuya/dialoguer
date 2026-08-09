@@ -123,7 +123,7 @@ impl Container {
 
           for p in parameters {
             if p.1.as_ref() == "NonControl" {
-              events.push(Event::RemoveParamater(p.0.clone()));
+              events.push(Event::RemoveEnum(p.0.clone()));
             } else {
               events.push(Event::SetParameter(p.0.clone(), p.1.clone()));
             }
@@ -203,7 +203,7 @@ impl Timeline {
           Event::PlayAnimation(name, looped) => {
             pending_set.anim = (name.clone(), *looped);
           },
-          Event::RemoveParamater(name) => pending_set
+          Event::RemoveEnum(name) => pending_set
             .parameters
             .push((name.clone(), "NonControl".into())),
           Event::SetView(name) => pending_set.view = name.clone(),

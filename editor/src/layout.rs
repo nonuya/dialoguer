@@ -164,7 +164,6 @@ impl Layout {
       ui.window("Inspector").build(|| {
         use core::live2d::animator::Value;
 
-        // Listc
         if let Some(r#enum) = ctx.enummap.enums.get_mut(enum_name)
           && let Some(params) = r#enum.values.get_mut(value_name)
         {
@@ -173,10 +172,13 @@ impl Layout {
           // =================
           // Preview
           if ui.button("Preview") {
-            self.enumlog.push((enum_name.clone(), value_name.clone()));
+            unimplemented!("Implement this");
+            /*self.enumlog.push((enum_name.clone(), value_name.clone()));
             for p in &*params {
-              ctx.animator.set_parameter(p.name.clone(), p.value);
-            }
+              ctx.animator.set_parameter_change(core::live2d::animator::ParameterChange {
+                enum_name
+              });
+            }*/
           }
 
           if ui.button("Clear") {
@@ -317,6 +319,10 @@ impl Layout {
             .border(true)
             .build(ui, || {
               if let Some(id) = self.selected_node_id {
+                if ui.is_window_focused() && ui.io().key_ctrl() && ui.is_key_pressed(Key::C) {
+                  println!("Copied");
+                }
+
                 if ui.button("Play") {
                   match self.graph.export_to_dialog(id, &self.timelines) {
                     Ok(dialogs) => {
@@ -634,7 +640,7 @@ impl Layout {
                   ui.same_line();
 
                   ui.input_float_config("##wait_seconds")
-                    .step(0.1)
+                    .step(0.05)
                     .build(seconds);
 
                   ui.same_line();
@@ -804,29 +810,19 @@ impl Layout {
     ctx: &mut EditorContext,
     start_point: Option<(String, Vec<(Rc<str>, core::dialog::Dialog)>)>,
   ) {
-    let mut reset_model = || {
-      info!("Resetting Model...");
-      ctx.model.load_saved_parameters();
-      ctx.animator.stop_timer();
-      ctx.animator.clear_parameters();
-      ctx.animator.clear_motion();
-    };
-
     match start_point {
       Some((name, entries)) => {
         *ctx.dialog_mgr = core::dialog::DialogManager::new_from_entries(entries);
         let initial_dialog = ctx.dialog_mgr.build(&name).unwrap();
-
-        if !matches!(initial_dialog, core::dialog::DialogEntryPoint::Choicer(..)) {
-          reset_model();
-        }
-
         *ctx.dialog_player = Some(core::dialog::DialogPlayer::new(name.into(), initial_dialog));
         ctx.dialog_player.as_mut().unwrap().play();
         info!("Playing Conversation...");
       }
       None => {
-        reset_model();
+        ctx.model.load_saved_parameters();
+        ctx.animator.stop_timer();
+        ctx.animator.clear_parameters();
+        ctx.animator.clear_motion();
         *ctx.dialog_player = None;
         info!("Stoping Conversation...");
       }

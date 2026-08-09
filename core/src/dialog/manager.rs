@@ -5,7 +5,7 @@ use std::{
 
 use crate::{
   dialog::parser::{Dialog, Event, Token, dialog_parser},
-  live2d::animator::{Animator, EnumMap, MotionManager, ParamValue, Value},
+  live2d::animator::{Animator, EnumMap, MotionManager, ParamValue, ParameterChange, Value},
 };
 use anyhow::Context;
 use chumsky::Parser;
@@ -201,8 +201,9 @@ impl DialogPlayer {
       return;
     };
 
-    // Antes de avanzar al siguiente nodo, consumimos los eventos
-    // restantes del nodo actual aplicando SetParameter/SetMainChoicer/RemoveParamater.
+    let mut pending_enums = Vec::new();
+    let mut pending_remove_enums = Vec::new();
+
     if let Some(conversation_iter) = iter.queue.front_mut() {
       let dialog = &dialog_mgr.dialogs[iter.index];
       let nodes = match dialog {
@@ -221,30 +222,24 @@ impl DialogPlayer {
           Event::SetParameter(enum_type, enum_value) => match enum_map.enums.get(enum_type) {
             Some(myenum) => match myenum.values.get(enum_value) {
               Some(params) => {
-                for p in params {
-                  animator
-                    .set_parameter(p.name.clone(), get_parameter_value(p, enum_map, animator));
-                }
+                pending_enums.push((enum_type, enum_value, params));
               }
               None => warn!(
-                "EnumValue '{}' doesn't exists in '{}'",
+                "[SetParameter] EnumValue '{}' doesn't exists in '{}'",
                 enum_value, enum_type
               ),
             },
-            None => warn!("EnumType '{}' doesn't exists!", enum_type),
+            None => warn!("[SetParameter] EnumType '{}' doesn't exists!", enum_type),
           },
-          Event::RemoveParamater(enum_type) => match enum_map.enums.get(enum_type) {
-            Some(myenum) => match myenum.values.values().next() {
-              Some(params) => {
-                for p in params {
-                  warn!("Removing '{}'", &p.name);
-                  animator.remove_parameter(&p.name);
-                }
-              }
-              None => warn!("EnumType '{}' is empty", enum_type),
-            },
-            None => warn!("EnumType '{}' doesn't exists!", enum_type),
-          },
+          Event::RemoveEnum(enum_type) => {
+            if enum_map.enums.contains_key(enum_type) {
+              debug!("[RemoveEnum] Removing '{}'", enum_type);
+              pending_remove_enums.push(enum_type);
+            } else {
+              warn!("[RemoveEnum] Enum doesnt exists '{}'", enum_type);
+            }
+            conversation_iter.events.pop_front();
+          }
           Event::PlayAnimation(name, looped) => match motion_mgr.get(name) {
             Some(motion) => animator.set_motion(motion.clone(), *looped),
             None => warn!("Animation '{}' not found", name),
@@ -268,6 +263,59 @@ impl DialogPlayer {
       self.change_iter(None);
     } else {
       self.state = PlayerState::Running;
+    }
+
+    let parameters: Vec<_> = pending_enums
+      .iter()
+      .map(|pending_enum| {
+        let params: Vec<_> = pending_enum
+          .2
+          .iter()
+          .map(|p| {
+            let inc = p
+              .modification
+              .as_ref()
+              .map(|m| {
+                if animator.is_enum_active(&m.lhs, &m.rhs)
+                  || pending_enums
+                    .iter()
+                    .find(|e| e.0 == &m.lhs && e.1 == &m.rhs)
+                    .is_some()
+                {
+                  m.then
+                } else {
+                  0.0
+                }
+              })
+              .unwrap_or(0.0);
+
+            let value = match p.value {
+              Value::Fixed(v) => Value::Fixed(v + inc),
+              Value::Smooth { target, step, .. } => Value::Smooth {
+                actual: 0.0,
+                target: target + inc,
+                step,
+              },
+            };
+
+            (p.name.clone(), value)
+          })
+          .collect();
+
+        ParameterChange {
+          enumtype: pending_enum.0.clone(),
+          enumname: pending_enum.1.clone(),
+          params,
+        }
+      })
+      .collect();
+
+    for p in parameters {
+      animator.set_parameter_change(p);
+    }
+
+    for e in pending_remove_enums {
+      animator.remove_enum(e, enum_map);
     }
   }
 
@@ -357,8 +405,8 @@ impl DialogPlayer {
     let conversation = &nodes[conversation_iter.idx];
     let mut next_iter = None;
     let mut pending_animation = None;
-    let mut pending_parameters = Vec::new();
-    let mut pending_remove_parameters = Vec::new();
+    let mut pending_enums = Vec::new();
+    let mut pending_remove_enums = Vec::new();
 
     loop {
       let Some(idx) = conversation_iter.events.front_mut() else {
@@ -385,10 +433,7 @@ impl DialogPlayer {
           match enum_map.enums.get(enum_type) {
             Some(myenum) => match myenum.values.get(enum_value) {
               Some(params) => {
-                for p in params {
-                  pending_parameters.push((p.name.clone(), get_parameter_value(p, enum_map, animator))); 
-                  // animator.set_parameter(p.name.clone(), get_parameter_value(p, enum_map, animator));
-                }
+                pending_enums.push((enum_type, enum_value, params));
               }
               None => warn!(
                 "[SetParameter] EnumValue '{}' doesn't exists in '{}'",
@@ -402,7 +447,6 @@ impl DialogPlayer {
         }
         Event::PlayAnimation(name, looped) => {
           match motion_mgr.get(name) {
-            // Some(motion) => animator.play_motion(motion.clone(), *looped),
             Some(motion) => pending_animation = Some((motion.clone(), *looped)),
             None => warn!("[SetAnim] Animation '{}' not found", name),
           }
@@ -410,23 +454,12 @@ impl DialogPlayer {
           conversation_iter.events.pop_front();
           continue;
         }
-        Event::RemoveParamater(enum_type) => {
-          match enum_map.enums.get(enum_type) {
-            Some(myenum) => {
-              let params = myenum
-                .values
-                .values()
-                .next()
-                .context("EnumType is empty")
-                .unwrap();
-              for p in params {
-                // FIXME: Remove &'static str
-                warn!("[RemoveParameter] Removing '{}'", &p.name);
-                pending_remove_parameters.push(p.name.clone());
-                // animator.remove_parameter(&p.name);
-              }
-            }
-            None => warn!("[RemoveParameter] EnumType '{}' doesn't exists!", enum_type),
+        Event::RemoveEnum(enum_type) => {
+          if enum_map.enums.contains_key(enum_type) {
+            debug!("[RemoveEnum] Removing '{}'", enum_type);
+            pending_remove_enums.push(enum_type);
+          } else {
+            warn!("[RemoveEnum] Enum doesnt exists '{}'", enum_type);
           }
           conversation_iter.events.pop_front();
           continue;
@@ -478,23 +511,69 @@ impl DialogPlayer {
       self.change_iter(Some(next));
     }
 
+    let parameters: Vec<_> = pending_enums
+      .iter()
+      .map(|pending_enum| {
+        let params: Vec<_> = pending_enum
+          .2
+          .iter()
+          .map(|p| {
+            let inc = p
+              .modification
+              .as_ref()
+              .map(|m| {
+                if animator.is_enum_active(&m.lhs, &m.rhs)
+                  || pending_enums
+                    .iter()
+                    .find(|e| e.0 == &m.lhs && e.1 == &m.rhs)
+                    .is_some()
+                {
+                  m.then
+                } else {
+                  0.0
+                }
+              })
+              .unwrap_or(0.0);
+
+            let value = match p.value {
+              Value::Fixed(v) => Value::Fixed(v + inc),
+              Value::Smooth { target, step, .. } => Value::Smooth {
+                actual: 0.0,
+                target: target + inc,
+                step,
+              },
+            };
+
+            (p.name.clone(), value)
+          })
+          .collect();
+
+        ParameterChange {
+          enumtype: pending_enum.0.clone(),
+          enumname: pending_enum.1.clone(),
+          params,
+        }
+      })
+      .collect();
+
+    for p in parameters {
+      if pending_animation.is_some() {
+        animator.deferred_set_parameter(p);
+      } else {
+        animator.set_parameter_change(p);
+      }
+    }
+
+    for e in pending_remove_enums {
+      if pending_animation.is_some() {
+        animator.deferred_remove_enum(e.clone());
+      } else {
+        animator.remove_enum(e, enum_map);
+      }
+    }
+
     if let Some((motion, looped)) = pending_animation.take() {
       animator.play_motion(motion, looped);
-      for (id, value) in pending_parameters {
-        animator.deferred_set_parameter(id, value);
-      }
-
-      for id in pending_remove_parameters {
-        animator.deferred_remove_parameter(id);
-      }
-    } else {
-      for id in pending_remove_parameters {
-        animator.remove_parameter(&id);
-      }
-
-      for (id, value) in pending_parameters {
-        animator.set_parameter(id, value);
-      }
     }
   }
 
@@ -508,35 +587,5 @@ impl DialogPlayer {
         self.iter = None;
       }
     }
-  }
-}
-
-fn get_parameter_value(p: &ParamValue, enum_map: &EnumMap, animator: &Animator) -> Value {
-  let inc = p
-    .modification
-    .as_ref()
-    .map(|m| {
-      let res = enum_map
-        .enums
-        .get(&m.lhs)
-        .and_then(|e| e.values.get(&m.rhs))
-        .is_some_and(|values| {
-          values.iter().all(|v| {
-            animator
-              .is_parameter_equal_to_value(&v.name, &get_parameter_value(v, enum_map, animator))
-          })
-        });
-
-      if res { m.then } else { 0.0 }
-    })
-    .unwrap_or(0.0);
-
-  match p.value {
-    Value::Fixed(v) => Value::Fixed(v + inc),
-    Value::Smooth { target, step, .. } => Value::Smooth {
-      actual: 0.0,
-      target: target + inc,
-      step,
-    },
   }
 }

@@ -77,19 +77,26 @@ enum FadeStatus {
   None,
 }
 
-const FADE_DURATION: f32 = 0.20;
-const FADE_STEP: f32 = 2.0 / FADE_DURATION;
+const FADE_DURATION: f32 = 0.10;
+const FADE_STEP: f32 = 1.0 / FADE_DURATION;
+
+pub struct ParameterChange {
+  pub enumtype: Rc<str>,
+  pub enumname: Rc<str>,
+  pub params: Vec<(Rc<str>, Value)>,
+}
 
 pub struct Animator {
   motion: Option<Motion>,
   fade_status: FadeStatus,
   timer: Option<f32>,
   blackscreen_alpha: f32,
-  map: HashMap<Rc<str>, Value>,
+  parameters_map: HashMap<Rc<str>, Value>,
+  activeenum_map: HashMap<Rc<str>, Rc<str>>,
   view: ViewType,
   target_view: ViewType,
-  pending_set_parameter: VecDeque<(Rc<str>, Value)>,
-  pending_remove_parameter: VecDeque<Rc<str>>,
+  pending_set_parameter: VecDeque<ParameterChange>,
+  pending_remove_enum: VecDeque<Rc<str>>,
 }
 
 impl Animator {
@@ -101,9 +108,10 @@ impl Animator {
       target_view: initial_view,
       fade_status: FadeStatus::None,
       pending_set_parameter: VecDeque::new(),
-      pending_remove_parameter: VecDeque::new(),
+      pending_remove_enum: VecDeque::new(),
       blackscreen_alpha: 0.0,
-      map: HashMap::new(),
+      parameters_map: HashMap::new(),
+      activeenum_map: HashMap::new(),
     }
   }
 
@@ -122,32 +130,26 @@ impl Animator {
     self.motion = Some(motion);
   }
 
-  pub fn is_parameter_equal_to_value(&self, id: &str, b: &Value) -> bool {
-    self.map.get(id).is_some_and(|a| {
-      let lhs = match a {
-        Value::Fixed(f) => f,
-        Value::Smooth { target, .. } => target,
-      };
-      let rhs = match b {
-        Value::Fixed(f) => f,
-        Value::Smooth { target, .. } => target,
-      };
-
-      lhs == rhs
-    })
-  }
-
   pub fn clear_parameters(&mut self) {
-    self.map.clear();
+    self.parameters_map.clear();
+    self.activeenum_map.clear();
   }
 
-  pub fn deferred_set_parameter(&mut self, id: Rc<str>, value: Value) {
-    self.pending_set_parameter.push_back((id, value));
+  pub fn deferred_set_parameter(&mut self, change: ParameterChange) {
+    self.pending_set_parameter.push_back(change);
   }
 
-  pub fn set_parameter(&mut self, id: Rc<str>, mut value: Value) {
+  pub fn set_parameter_change(&mut self, change: ParameterChange) {
+    for (id, value) in change.params.into_iter() {
+      self.set_parameter(id, value);
+    }
+
+    self.activeenum_map.insert(change.enumtype, change.enumname);
+  }
+
+  fn set_parameter(&mut self, id: Rc<str>, mut value: Value) {
     // If we change an existing value, we need to start from that value and go to new value
-    if let Some(old) = self.map.get(&id) {
+    if let Some(old) = self.parameters_map.get(&id) {
       match (old, &mut value) {
         (
           Value::Smooth {
@@ -176,15 +178,33 @@ impl Animator {
       _ => {}
     }
 
-    self.map.insert(id, value);
+    self.parameters_map.insert(id, value);
   }
 
-  pub fn remove_parameter(&mut self, id: &Rc<str>) {
-    self.map.remove(id);
+  pub fn is_enum_active(&self, enumtype: &Rc<str>, enumvalue: &Rc<str>) -> bool {
+    self
+      .activeenum_map
+      .get(enumtype)
+      .is_some_and(|v| v.as_ref() == enumvalue.as_ref())
   }
 
-  pub fn deferred_remove_parameter(&mut self, id: Rc<str>) {
-    self.pending_remove_parameter.push_back(id);
+  pub fn remove_enum(&mut self, name: &Rc<str>, enummap: &EnumMap) {
+    if let Some(enumvalue) = self.activeenum_map.remove(name)
+      && let Some(params) = enummap
+        .enums
+        .get(name)
+        .unwrap()
+        .values
+        .get(&enumvalue)
+    {
+      for p in params.iter() {
+        self.parameters_map.remove(&p.name);
+      }
+    }
+  }
+
+  pub fn deferred_remove_enum(&mut self, name: Rc<str>) {
+    self.pending_remove_enum.push_back(name);
   }
 
   pub fn set_timer(&mut self, seconds: f32) {
@@ -207,7 +227,12 @@ impl Animator {
     glam::Mat4::from_scale_rotation_translation(
       glam::Vec3::splat(self.view.scale),
       glam::Quat::from_rotation_z(self.view.rotation.to_radians()),
-      glam::vec3(self.view.position.0, self.view.position.1, self.view.position.2))
+      glam::vec3(
+        self.view.position.0,
+        self.view.position.1,
+        self.view.position.2,
+      ),
+    )
   }
 
   pub fn stop_timer(&mut self) {
@@ -219,21 +244,20 @@ impl Animator {
   }
 
   // FIXME: Hay un Delay en Wait, no sé si termina el Wait y se espera unos microsegundos para empezar
-  pub fn update(&mut self, deltatime: f32, model: &mut Model) {
+  pub fn update(&mut self, deltatime: f32, model: &mut Model, enummap: &EnumMap) {
     // Fade
     match std::mem::replace(&mut self.fade_status, FadeStatus::None) {
       FadeStatus::FadeIn(motion, looped) => {
         self.blackscreen_alpha += FADE_STEP * deltatime;
 
         if self.blackscreen_alpha >= 1.0 {
-          // self.blackscreen_alpha = 1.0 + FADE_DURATION * 0.2; // Little delay for update motion
-          self.blackscreen_alpha = 1.0;
+          self.blackscreen_alpha = 1.0 + FADE_DURATION * 10.0; // Little delay for update motion
           self.fade_status = FadeStatus::FadeOut;
-          while let Some((id, value)) = self.pending_set_parameter.pop_front() {
-            self.set_parameter(id, value);
+          while let Some(change) = self.pending_set_parameter.pop_front() {
+            self.set_parameter_change(change);
           }
-          while let Some(id) = self.pending_remove_parameter.pop_front() {
-            self.remove_parameter(&id);
+          while let Some(name) = self.pending_remove_enum.pop_front() {
+            self.remove_enum(&name, enummap);
           }
           self.set_motion(motion, looped);
         } else {
@@ -258,7 +282,7 @@ impl Animator {
       model.apply_motion(motion).unwrap();
     }
 
-    for (id, value) in &mut self.map {
+    for (id, value) in &mut self.parameters_map {
       match value {
         Value::Fixed(val) => {
           if !model.set_parameter_value(id, *val) {
@@ -272,7 +296,7 @@ impl Animator {
         } => {
           if actual != target {
             let delta = *target - *actual;
-            let step = *step * deltatime * 60.0;
+            let step = *step * deltatime * 30.0;
 
             if delta.abs() <= step {
               *actual = *target;
@@ -292,7 +316,9 @@ impl Animator {
     model.update_parameters();
 
     // Timer
-    if !matches!(self.fade_status, FadeStatus::FadeIn(..)) && let Some(remaining) = self.timer.as_mut() {
+    if !matches!(self.fade_status, FadeStatus::FadeIn(..))
+      && let Some(remaining) = self.timer.as_mut()
+    {
       *remaining -= deltatime;
 
       if *remaining <= 0.0 {
@@ -300,32 +326,26 @@ impl Animator {
       }
     }
 
-    // ViewType 
+    // ViewType
     const VIEW_SPEED: f32 = 0.20;
     const EPSILON: f32 = 0.01;
     let t = (VIEW_SPEED * deltatime).min(1.0);
 
-    self.view.position.0 +=
-        (self.target_view.position.0 - self.view.position.0) * t;
-    self.view.position.1 +=
-        (self.target_view.position.1 - self.view.position.1) * t;
-    self.view.position.2 +=
-        (self.target_view.position.2 - self.view.position.2) * t;
+    self.view.position.0 += (self.target_view.position.0 - self.view.position.0) * t;
+    self.view.position.1 += (self.target_view.position.1 - self.view.position.1) * t;
+    self.view.position.2 += (self.target_view.position.2 - self.view.position.2) * t;
 
-    self.view.rotation +=
-        (self.target_view.rotation - self.view.rotation) * t;
+    self.view.rotation += (self.target_view.rotation - self.view.rotation) * t;
 
-    self.view.scale +=
-        (self.target_view.scale - self.view.scale) * t;
+    self.view.scale += (self.target_view.scale - self.view.scale) * t;
 
-    if
-        (self.view.position.0 - self.target_view.position.0).abs() < EPSILON &&
-        (self.view.position.1 - self.target_view.position.1).abs() < EPSILON &&
-        (self.view.position.2 - self.target_view.position.2).abs() < EPSILON &&
-        (self.view.rotation - self.target_view.rotation).abs() < EPSILON &&
-        (self.view.scale - self.target_view.scale).abs() < EPSILON
+    if (self.view.position.0 - self.target_view.position.0).abs() < EPSILON
+      && (self.view.position.1 - self.target_view.position.1).abs() < EPSILON
+      && (self.view.position.2 - self.target_view.position.2).abs() < EPSILON
+      && (self.view.rotation - self.target_view.rotation).abs() < EPSILON
+      && (self.view.scale - self.target_view.scale).abs() < EPSILON
     {
-        self.view = self.target_view.clone();
+      self.view = self.target_view.clone();
     }
   }
 }
