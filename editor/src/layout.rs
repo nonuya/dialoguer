@@ -631,7 +631,9 @@ impl Layout {
 
       ui.same_line();
 
-      if ui.button("(D)elete") || (ui.io().key_alt() && ui.is_key_pressed(Key::D)) {
+      let is_window_focused = ui.is_window_focused_with_flags(FocusedFlags::ROOT_AND_CHILD_WINDOWS);
+
+      if ui.button("(D)elete") || (is_window_focused && ui.io().key_alt() && ui.is_key_pressed(Key::D)) {
         match &selected {
           Selection::Block {
             container_id,
@@ -645,8 +647,6 @@ impl Layout {
           }
         }
       }
-
-      let is_window_focused = ui.is_window_focused_with_flags(FocusedFlags::ROOT_AND_CHILD_WINDOWS);
 
       match selected {
         Selection::Block {

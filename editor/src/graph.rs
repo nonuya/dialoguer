@@ -39,6 +39,12 @@ pub enum Command {
     link: Link,
   },
 }
+
+enum CopiedNode {
+  Conversation { name: String, timeline: Timeline },
+  Choicer { name: String, options: Vec<String> },
+}
+
 pub struct Graph {
   nodes: Vec<Node>,
   timelines: HashMap<NodeId, Timeline>,
@@ -48,6 +54,7 @@ pub struct Graph {
   id_gen: IdGen,
   selected_node_id: Option<NodeId>,
   first_frame: bool,
+  copied_node: Option<CopiedNode>,
   history: UndoRedo<(), Command>,
 }
 
@@ -169,6 +176,7 @@ impl Graph {
       timelines,
       links,
       id_gen,
+      copied_node: None,
       first_frame: true,
     }
   }
@@ -578,7 +586,8 @@ impl Graph {
       }
     }
   }
-  fn add_conversation(&mut self, name: String) -> NodeId {
+
+  fn add_conversation(&mut self, name: String, timeline: Timeline) -> NodeId {
     let id = self.id_gen.next_node(); // Ignoring this because IDs have usize type so you have to put a lot of nodes
     let input = self.id_gen.next_pin();
     let output = self.id_gen.next_pin();
@@ -591,12 +600,7 @@ impl Graph {
       position: [0.0, 0.0],
     };
 
-    assert!(
-      self
-        .timelines
-        .insert(node.id(), Timeline::new_empty())
-        .is_none()
-    );
+    assert!(self.timelines.insert(node.id(), timeline).is_none());
     self.nodes.push(node.clone());
     self
       .history
@@ -605,10 +609,9 @@ impl Graph {
     id
   }
 
-  fn add_choicer(&mut self, name: String) -> NodeId {
+  fn add_choicer(&mut self, name: String, options: Vec<String>) -> NodeId {
     let id = self.id_gen.next_node();
     let input = self.id_gen.next_pin();
-    let options = Vec::new();
     let outputs = options.iter().map(|_| self.id_gen.next_pin()).collect();
     let node = Node::Choicer {
       id,
@@ -644,20 +647,26 @@ impl Graph {
     current_dialog_name: Option<&Rc<str>>,
   ) {
     let mut pending_deleting = false;
+    let mut pending_add_conversation = None;
+    let mut pending_add_choicer = None;
+    let mut pending_paste_node = None;
+    let is_window_focused = ui.is_window_focused_with_flags(FocusedFlags::ROOT_AND_CHILD_WINDOWS);
 
     if !self.flow_link_editing {
       if ui.button("Add Conversation") {
-        self.add_conversation(format!("Conversation {}", self.id_gen.0));
+        pending_add_conversation = Some(format!("Conversation {}", self.id_gen.0));
       }
       ui.same_line();
       if ui.button("Add Choicer") {
-        self.add_choicer(format!("Choicer {}", self.id_gen.0));
+        pending_add_choicer = Some(format!("Choicer {}", self.id_gen.0));
       }
 
       if let Some(id) = self.selected_node_id {
         ui.same_line();
 
-        if ui.button("(D)elete") {
+        if ui.button("Delete")
+          || (is_window_focused && ui.io().key_alt() && ui.is_key_pressed(Key::D))
+        {
           if let Some(index) = self.nodes.iter().position(|n| n.id() == id) {
             self.delete_node(index);
             pending_deleting = true;
@@ -669,6 +678,43 @@ impl Graph {
       ui.separator_vertical();
     }
 
+    if is_window_focused && ui.io().key_ctrl() && ui.is_key_pressed(Key::V) {
+      if let Some(node) = self.copied_node.as_ref() {
+        match node {
+          CopiedNode::Conversation { name, timeline } => {
+            let id = self.add_conversation(name.clone(), timeline.clone());
+            pending_paste_node = Some(id);
+          }
+          CopiedNode::Choicer { name, options } => {
+            let id = self.add_choicer(name.clone(), options.clone());
+            pending_paste_node = Some(id);
+          }
+        }
+      }
+    }
+
+    if let Some(id) = self.selected_node_id {
+      if is_window_focused && ui.io().key_ctrl() && ui.is_key_pressed(Key::C) {
+        if let Some(node) = self.nodes.iter().find(|n| n.id() == id) {
+          match node {
+            Node::Conversation { name, .. } => {
+              let timeline = self.timelines.get(&id).unwrap().clone();
+              self.copied_node = Some(CopiedNode::Conversation {
+                name: name.clone(),
+                timeline,
+              });
+            }
+            Node::Choicer { name, options, .. } => {
+              self.copied_node = Some(CopiedNode::Choicer {
+                name: name.clone(),
+                options: options.clone(),
+              });
+            }
+          }
+        }
+      }
+    }
+
     ui.same_line();
     if ui.button(if !self.flow_link_editing {
       "Toggle Flow Link"
@@ -678,63 +724,6 @@ impl Graph {
       self.flow_link_editing = !self.flow_link_editing;
     }
 
-    self.draw_graph(ui, &node_editor, current_dialog_name, pending_deleting);
-  }
-
-  fn delete_node(&mut self, index: usize) {
-    let pins: Vec<PinId> = match &self.nodes[index] {
-      Node::Conversation { input, output, .. } => {
-        vec![*input, *output]
-      }
-      Node::Choicer { input, outputs, .. } => {
-        let mut pins = Vec::with_capacity(outputs.len() + 1);
-        pins.push(*input);
-        pins.extend(outputs.iter().copied());
-        pins
-      }
-    };
-    let node = self.nodes[index].clone();
-
-    let links: Vec<Link> = self
-      .links
-      .iter()
-      .filter(|link| pins.contains(&link.from) || pins.contains(&link.to))
-      .cloned()
-      .collect();
-
-    let flow_links: Vec<Link> = self
-      .flow_links
-      .iter()
-      .filter(|link| pins.contains(&link.from) || pins.contains(&link.to))
-      .cloned()
-      .collect();
-
-    let timeline = self.timelines.get(&node.id()).cloned();
-
-    self.timelines.remove(&node.id());
-    self
-      .links
-      .retain(|link| !pins.contains(&link.from) && !pins.contains(&link.to));
-    self
-      .flow_links
-      .retain(|link| !pins.contains(&link.from) && !pins.contains(&link.to));
-    self.nodes.remove(index);
-
-    self.history.command(Command::RemoveNode {
-      index,
-      node,
-      links,
-      flow_links,
-      timeline,
-    });
-  }
-  pub fn draw_graph(
-    &mut self,
-    ui: &Ui,
-    node_editor: &EditorContext,
-    current_dialog_name: Option<&Rc<str>>,
-    pending_deleting: bool,
-  ) {
     let editor = ui.node_editor(node_editor, "DialogueGraph", [0.0, 0.0]);
     let mut pending_new_option: Option<NodeId> = None;
     let mut pending_delete_option: Option<(NodeId, usize)> = None;
@@ -932,7 +921,69 @@ impl Graph {
       self.selected_node_id = current_selection;
     }
 
+    if let Some(name) = pending_add_conversation.take() {
+      let id = self.add_conversation(name, Timeline::new_empty());
+      editor.set_node_position(id, ui.mouse_pos());
+    }
+
+    if let Some(name) = pending_add_choicer.take() {
+      let id = self.add_choicer(name, Vec::new());
+      editor.set_node_position(id, ui.mouse_pos());
+    }
+
+    if let Some(id) = pending_paste_node.take() {
+      editor.set_node_position(id, ui.mouse_pos());
+    }
+
     editor.end();
+  }
+
+  fn delete_node(&mut self, index: usize) {
+    let pins: Vec<PinId> = match &self.nodes[index] {
+      Node::Conversation { input, output, .. } => {
+        vec![*input, *output]
+      }
+      Node::Choicer { input, outputs, .. } => {
+        let mut pins = Vec::with_capacity(outputs.len() + 1);
+        pins.push(*input);
+        pins.extend(outputs.iter().copied());
+        pins
+      }
+    };
+    let node = self.nodes[index].clone();
+
+    let links: Vec<Link> = self
+      .links
+      .iter()
+      .filter(|link| pins.contains(&link.from) || pins.contains(&link.to))
+      .cloned()
+      .collect();
+
+    let flow_links: Vec<Link> = self
+      .flow_links
+      .iter()
+      .filter(|link| pins.contains(&link.from) || pins.contains(&link.to))
+      .cloned()
+      .collect();
+
+    let timeline = self.timelines.get(&node.id()).cloned();
+
+    self.timelines.remove(&node.id());
+    self
+      .links
+      .retain(|link| !pins.contains(&link.from) && !pins.contains(&link.to));
+    self
+      .flow_links
+      .retain(|link| !pins.contains(&link.from) && !pins.contains(&link.to));
+    self.nodes.remove(index);
+
+    self.history.command(Command::RemoveNode {
+      index,
+      node,
+      links,
+      flow_links,
+      timeline,
+    });
   }
 
   pub fn get_selected_node_id(&self) -> Option<NodeId> {
