@@ -81,62 +81,70 @@ const FADE_DURATION: f32 = 0.10;
 const FADE_STEP: f32 = 1.0 / FADE_DURATION;
 
 pub struct ParameterChange {
-  pub enumtype: Rc<str>,
-  pub enumname: Rc<str>,
+  pub enum_name: Rc<str>,
+  pub value_name: Rc<str>,
   pub params: Vec<(Rc<str>, Value)>,
 }
 
-pub struct Animator {
-  motion: Option<Motion>,
-  fade_status: FadeStatus,
-  timer: Option<f32>,
-  blackscreen_alpha: f32,
-  parameters_map: HashMap<Rc<str>, Value>,
-  activeenum_map: HashMap<Rc<str>, Rc<str>>,
-  view: ViewType,
-  target_view: ViewType,
-  pending_set_parameter: VecDeque<ParameterChange>,
-  pending_remove_enum: VecDeque<Rc<str>>,
+impl ParameterChange {
+  pub fn from_params(
+    enum_name: Rc<str>,
+    value_name: Rc<str>,
+    params: &Vec<ParamValue>,
+    mod_predicate: impl Fn(&Rc<str>, &Rc<str>) -> bool,
+  ) -> Self {
+    let params: Vec<_> = params
+      .iter()
+      .map(|p| {
+        let inc = p
+          .modification
+          .as_ref()
+          .map(|m| {
+            if mod_predicate(&m.lhs, &m.rhs) {
+              m.then
+            } else {
+              0.0
+            }
+          })
+          .unwrap_or(0.0);
+
+        let value = match p.value {
+          Value::Fixed(v) => Value::Fixed(v + inc),
+          Value::Smooth { target, step, .. } => Value::Smooth {
+            actual: 0.0,
+            target: target + inc,
+            step,
+          },
+        };
+
+        (p.name.clone(), value)
+      })
+      .collect();
+
+    Self {
+      enum_name,
+      value_name,
+      params,
+    }
+  }
 }
 
-impl Animator {
-  pub fn new(initial_view: ViewType) -> Self {
+pub struct ParameterState {
+  parameters_map: HashMap<Rc<str>, Value>,
+  activeenum_map: HashMap<Rc<str>, Rc<str>>,
+}
+
+impl ParameterState {
+  pub fn new() -> Self {
     Self {
-      motion: None,
-      timer: None,
-      view: initial_view,
-      target_view: initial_view,
-      fade_status: FadeStatus::None,
-      pending_set_parameter: VecDeque::new(),
-      pending_remove_enum: VecDeque::new(),
-      blackscreen_alpha: 0.0,
       parameters_map: HashMap::new(),
       activeenum_map: HashMap::new(),
     }
   }
 
-  pub fn blackscreen_alpha(&self) -> f32 {
-    self.blackscreen_alpha
-  }
-
-  pub fn play_motion(&mut self, motion: Motion, looped: bool) {
-    self.fade_status = FadeStatus::FadeIn(motion, looped);
-    self.blackscreen_alpha = 0.0;
-  }
-
-  pub fn set_motion(&mut self, mut motion: Motion, looped: bool) {
-    motion.play();
-    motion.set_looped(looped);
-    self.motion = Some(motion);
-  }
-
-  pub fn clear_parameters(&mut self) {
+  pub fn reset(&mut self) {
     self.parameters_map.clear();
     self.activeenum_map.clear();
-  }
-
-  pub fn deferred_set_parameter(&mut self, change: ParameterChange) {
-    self.pending_set_parameter.push_back(change);
   }
 
   pub fn set_parameter_change(&mut self, change: ParameterChange) {
@@ -144,7 +152,9 @@ impl Animator {
       self.set_parameter(id, value);
     }
 
-    self.activeenum_map.insert(change.enumtype, change.enumname);
+    self
+      .activeenum_map
+      .insert(change.enum_name, change.value_name);
   }
 
   fn set_parameter(&mut self, id: Rc<str>, mut value: Value) {
@@ -181,26 +191,100 @@ impl Animator {
     self.parameters_map.insert(id, value);
   }
 
-  pub fn is_enum_active(&self, enumtype: &Rc<str>, enumvalue: &Rc<str>) -> bool {
+  pub fn is_enum_active(&self, enum_name: &Rc<str>, value_name: &Rc<str>) -> bool {
     self
       .activeenum_map
-      .get(enumtype)
-      .is_some_and(|v| v.as_ref() == enumvalue.as_ref())
+      .get(enum_name)
+      .is_some_and(|v| v.as_ref() == value_name.as_ref())
   }
 
   pub fn remove_enum(&mut self, name: &Rc<str>, enummap: &EnumMap) {
-    if let Some(enumvalue) = self.activeenum_map.remove(name)
-      && let Some(params) = enummap
-        .enums
-        .get(name)
-        .unwrap()
-        .values
-        .get(&enumvalue)
+    if let Some(value_name) = self.activeenum_map.remove(name)
+      && let Some(params) = enummap.enums.get(name).unwrap().values.get(&value_name)
     {
       for p in params.iter() {
         self.parameters_map.remove(&p.name);
       }
     }
+  }
+
+  pub fn update_model(&mut self, deltatime: f32, model: &mut Model) {
+    for (id, value) in &mut self.parameters_map {
+      match value {
+        Value::Fixed(val) => {
+          if !model.set_parameter_value(id, *val) {
+            warn!("Failed to set '{}' to '{}'", id, val);
+          }
+        }
+        Value::Smooth {
+          actual,
+          target,
+          step,
+        } => {
+          if actual != target {
+            let delta = *target - *actual;
+            let step = *step * deltatime * 30.0;
+
+            if delta.abs() <= step {
+              *actual = *target;
+            } else {
+              *actual += delta.signum() * step;
+            }
+          }
+
+          if !model.set_parameter_value(id, *actual) {
+            warn!("Failed to set '{}' to '{}'", id, target);
+          }
+        }
+      }
+    }
+  }
+}
+
+pub struct Animator {
+  motion: Option<Motion>,
+  fade_status: FadeStatus,
+  timer: Option<f32>,
+  blackscreen_alpha: f32,
+  view: ViewType,
+  target_view: ViewType,
+  pending_set_parameter: VecDeque<ParameterChange>,
+  pending_remove_enum: VecDeque<Rc<str>>,
+  parameter_state: ParameterState,
+}
+
+impl Animator {
+  pub fn new(initial_view: ViewType) -> Self {
+    Self {
+      motion: None,
+      timer: None,
+      view: initial_view,
+      target_view: initial_view,
+      fade_status: FadeStatus::None,
+      pending_set_parameter: VecDeque::new(),
+      pending_remove_enum: VecDeque::new(),
+      blackscreen_alpha: 0.0,
+      parameter_state: ParameterState::new(),
+    }
+  }
+
+  pub fn blackscreen_alpha(&self) -> f32 {
+    self.blackscreen_alpha
+  }
+
+  pub fn play_motion(&mut self, motion: Motion, looped: bool) {
+    self.fade_status = FadeStatus::FadeIn(motion, looped);
+    self.blackscreen_alpha = 0.0;
+  }
+
+  pub fn set_motion(&mut self, mut motion: Motion, looped: bool) {
+    motion.play();
+    motion.set_looped(looped);
+    self.motion = Some(motion);
+  }
+
+  pub fn deferred_set_parameter(&mut self, change: ParameterChange) {
+    self.pending_set_parameter.push_back(change);
   }
 
   pub fn deferred_remove_enum(&mut self, name: Rc<str>) {
@@ -221,6 +305,14 @@ impl Animator {
 
   pub fn set_view(&mut self, view: ViewType) {
     self.view = view;
+  }
+
+  pub fn get_parameter_state(&self) -> &ParameterState {
+    &self.parameter_state
+  }
+
+  pub fn get_mut_parameter_state(&mut self) -> &mut ParameterState {
+    &mut self.parameter_state
   }
 
   pub fn get_matrix(&self) -> glam::Mat4 {
@@ -254,10 +346,10 @@ impl Animator {
           self.blackscreen_alpha = 1.0 + FADE_DURATION * 10.0; // Little delay for update motion
           self.fade_status = FadeStatus::FadeOut;
           while let Some(change) = self.pending_set_parameter.pop_front() {
-            self.set_parameter_change(change);
+            self.parameter_state.set_parameter_change(change);
           }
           while let Some(name) = self.pending_remove_enum.pop_front() {
-            self.remove_enum(&name, enummap);
+            self.parameter_state.remove_enum(&name, enummap);
           }
           self.set_motion(motion, looped);
         } else {
@@ -282,35 +374,7 @@ impl Animator {
       model.apply_motion(motion).unwrap();
     }
 
-    for (id, value) in &mut self.parameters_map {
-      match value {
-        Value::Fixed(val) => {
-          if !model.set_parameter_value(id, *val) {
-            warn!("Failed to set '{}' to '{}'", id, val);
-          }
-        }
-        Value::Smooth {
-          actual,
-          target,
-          step,
-        } => {
-          if actual != target {
-            let delta = *target - *actual;
-            let step = *step * deltatime * 30.0;
-
-            if delta.abs() <= step {
-              *actual = *target;
-            } else {
-              *actual += delta.signum() * step;
-            }
-          }
-
-          if !model.set_parameter_value(id, *actual) {
-            warn!("Failed to set '{}' to '{}'", id, target);
-          }
-        }
-      }
-    }
+    self.parameter_state.update_model(deltatime, model);
 
     // Otros ajustes de parametros
     model.update_parameters();
@@ -354,7 +418,7 @@ pub struct MotionManager(HashMap<Rc<str>, Motion>);
 
 impl MotionManager {
   pub fn new(path: &PathBuf, model3: &cubism::json::model::Model3) -> anyhow::Result<Self> {
-    /*let motions = model3
+    let motions = model3
       .file_references
       .motions
       .idle
@@ -370,8 +434,8 @@ impl MotionManager {
 
         Ok((name.into(), motion))
       })
-      .collect::<anyhow::Result<HashMap<_, _>>>()?;*/
-    let motions = HashMap::new();
+      .collect::<anyhow::Result<HashMap<_, _>>>()?;
+    // let motions = HashMap::new();
 
     Ok(Self(motions))
   }

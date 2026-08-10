@@ -21,13 +21,14 @@ pub struct Layout {
   graph: graph::Graph,
   is_main_layout: bool,
   selected_enum: Option<(Rc<str>, Rc<str>)>,
-  enumlog: Vec<(Rc<str>, Rc<str>)>,
+  enumlog: Vec<(Rc<str>, Rc<str>)>, // FIXME: Delete this
+  copied_block: Option<timeline::TimelineBlock>,
+  copied_container: Option<timeline::Container>,
+  focused_parameters: Vec<Rc<str>>, // Small list
   non_control: Rc<str>,
   unchanged: Rc<str>,
   empty: Rc<str>,
-  copied_block: Option<timeline::TimelineBlock>,
-  copied_container: Option<timeline::Container>,
-  copied_node: Option<graph::Node>,
+  enum_parameter_state: core::live2d::animator::ParameterState,
 }
 
 impl Layout {
@@ -40,17 +41,26 @@ impl Layout {
       node_editor: dear_node_editor::EditorContext::create(imgui_context),
       selected_enum: None,
       enumlog: Vec::new(),
-      is_main_layout: true,
+      is_main_layout: false,
       open_modal: false,
       graph: graph::Graph::new(dialog_mgr),
       new_modal_string: String::new(),
+      copied_block: None,
+      copied_container: None,
+      focused_parameters: Vec::new(),
+      enum_parameter_state: core::live2d::animator::ParameterState::new(),
       non_control: "NonControl".into(),
       unchanged: "(Unchanged)".into(),
       empty: "".into(),
-      copied_block: None,
-      copied_container: None,
-      copied_node: None,
     }
+  }
+
+  pub fn is_main_layout(&self) -> bool {
+    self.is_main_layout
+  }
+
+  pub fn mut_enum_parameter_state(&mut self) -> &mut core::live2d::animator::ParameterState {
+    &mut self.enum_parameter_state
   }
 
   pub fn draw(&mut self, ui: &mut Ui, ctx: EditorContext) {
@@ -143,7 +153,20 @@ impl Layout {
       });
 
     ui.window("Parameters").build(|| {
-      let mut parameters: Vec<_> = ctx.model.get_parameters_iter_mut().collect();
+      if !self.focused_parameters.is_empty() {
+        if ui.button("Clear Filter") {
+          self.focused_parameters.clear();
+        }
+      }
+
+      let mut parameters: Vec<_> = ctx
+        .model
+        .get_parameters_iter_mut()
+        .filter(|a| {
+          self.focused_parameters.is_empty()
+            || self.focused_parameters.iter().any(|b| a.id == b.as_ref())
+        })
+        .collect();
       parameters.sort_unstable_by(|a, b| natord::compare(a.id, b.id));
       let changed = parameters.into_iter().fold(false, |acc, e| {
         acc
@@ -159,27 +182,38 @@ impl Layout {
       ui.window("Inspector").build(|| {
         use core::live2d::animator::Value;
 
+        ui.text(format!("{}/{}", enum_name, value_name));
+        ui.separator_horizontal();
+
         if let Some(r#enum) = ctx.enummap.enums.get_mut(enum_name)
           && let Some(params) = r#enum.values.get_mut(value_name)
         {
           // =================
           // Toolbar
           // =================
-          // Preview
           if ui.button("Preview") {
-            unimplemented!("Implement this");
-            /*self.enumlog.push((enum_name.clone(), value_name.clone()));
-            for p in &*params {
-              ctx.animator.set_parameter_change(core::live2d::animator::ParameterChange {
-                enum_name
-              });
-            }*/
+            self.enumlog.push((enum_name.clone(), value_name.clone()));
+            self.enum_parameter_state.set_parameter_change(
+              core::live2d::animator::ParameterChange::from_params(
+                enum_name.clone(),
+                value_name.clone(),
+                params,
+                |lhs, rhs| {
+                  ctx.animator.get_parameter_state().is_enum_active(lhs, rhs)
+                    || self.enum_parameter_state.is_enum_active(lhs, rhs)
+                },
+              ),
+            );
           }
 
           if ui.button("Clear") {
             ctx.model.load_saved_parameters();
             self.enumlog.clear();
-            ctx.animator.clear_parameters();
+            self.enum_parameter_state.reset();
+          }
+
+          if ui.button("Focus") {
+            self.focused_parameters = params.iter().map(|p| p.name.clone()).collect();
           }
 
           ui.separator();
@@ -420,7 +454,7 @@ impl Layout {
             ui.same_line();
 
             ui.input_float_config("##wait_seconds")
-              .step(0.05)
+              .step(0.10)
               .build(seconds);
 
             ui.same_line();
@@ -633,7 +667,9 @@ impl Layout {
 
       let is_window_focused = ui.is_window_focused_with_flags(FocusedFlags::ROOT_AND_CHILD_WINDOWS);
 
-      if ui.button("(D)elete") || (is_window_focused && ui.io().key_alt() && ui.is_key_pressed(Key::D)) {
+      if ui.button("(D)elete")
+        || (is_window_focused && ui.io().key_alt() && ui.is_key_pressed(Key::D))
+      {
         match &selected {
           Selection::Block {
             container_id,
@@ -656,7 +692,10 @@ impl Layout {
         } => {
           if is_window_focused {
             if ui.io().key_ctrl() && ui.is_key_pressed(Key::C) {
-              debug!("Copied Block {} from Container {}", block.id, container_index);
+              debug!(
+                "Copied Block {} from Container {}",
+                block.id, container_index
+              );
               self.copied_block = Some(block.clone());
             }
 
@@ -835,7 +874,7 @@ impl Layout {
       None => {
         ctx.model.load_saved_parameters();
         ctx.animator.stop_timer();
-        ctx.animator.clear_parameters();
+        ctx.animator.get_mut_parameter_state().reset();
         ctx.animator.clear_motion();
         *ctx.dialog_player = None;
         info!("Stoping Conversation...");
@@ -864,9 +903,6 @@ impl Layout {
     if ui.is_item_hovered() && ui.is_mouse_clicked(MouseButton::Middle) {
       *value = default;
     }
-
-    ui.same_line();
-    ui.text(format!("{:.2}", value));
 
     changed
   }

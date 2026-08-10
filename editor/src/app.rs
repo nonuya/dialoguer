@@ -117,6 +117,11 @@ impl App {
     }
 
     self.animator.update(deltatime, &mut self.model, &self.enummap);
+
+    if !self.layout.is_main_layout() {
+      self.layout.mut_enum_parameter_state().update_model(deltatime, &mut self.model);
+      self.model.update_parameters();
+    }
   }
 
   pub fn draw(&mut self, ui: &mut Ui) {
@@ -139,7 +144,7 @@ impl App {
 
     ui.window("Preview").build(|| {
       // Put this section in comment if you wanna work with both of your hands
-      /*let available = ui.content_region_avail();
+      let available = ui.content_region_avail();
 
       if available[0] <= 0.0 || available[1] <= 0.0 {
         return;
@@ -165,7 +170,7 @@ impl App {
       Image::new(ui, self.texture_id, draw_size)
         .uv0([0.0, 1.0])
         .uv1([1.0, 0.0])
-        .build();*/
+        .build();
     });
   }
 

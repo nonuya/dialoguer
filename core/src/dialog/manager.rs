@@ -266,11 +266,11 @@ impl DialogPlayer {
 
     let parameters = Self::calculate_parameters(&pending_enums, animator);
     for p in parameters {
-      animator.set_parameter_change(p);
+      animator.get_mut_parameter_state().set_parameter_change(p);
     }
 
     for e in pending_remove_enums {
-      animator.remove_enum(e, enum_map);
+      animator.get_mut_parameter_state().remove_enum(e, enum_map);
     }
   }
 
@@ -471,7 +471,7 @@ impl DialogPlayer {
       if pending_animation.is_some() {
         animator.deferred_set_parameter(p);
       } else {
-        animator.set_parameter_change(p);
+        animator.get_mut_parameter_state().set_parameter_change(p);
       }
     }
 
@@ -479,7 +479,7 @@ impl DialogPlayer {
       if pending_animation.is_some() {
         animator.deferred_remove_enum(e.clone());
       } else {
-        animator.remove_enum(e, enum_map);
+        animator.get_mut_parameter_state().remove_enum(e, enum_map);
       }
     }
 
@@ -507,45 +507,18 @@ impl DialogPlayer {
     pending_enums
       .iter()
       .map(|pending_enum| {
-        let params: Vec<_> = pending_enum
-          .2
-          .iter()
-          .map(|p| {
-            let inc = p
-              .modification
-              .as_ref()
-              .map(|m| {
-                if animator.is_enum_active(&m.lhs, &m.rhs)
-                  || pending_enums
-                    .iter()
-                    .find(|e| e.0 == &m.lhs && e.1 == &m.rhs)
-                    .is_some()
-                {
-                  m.then
-                } else {
-                  0.0
-                }
-              })
-              .unwrap_or(0.0);
-
-            let value = match p.value {
-              Value::Fixed(v) => Value::Fixed(v + inc),
-              Value::Smooth { target, step, .. } => Value::Smooth {
-                actual: 0.0,
-                target: target + inc,
-                step,
-              },
-            };
-
-            (p.name.clone(), value)
-          })
-          .collect();
-
-        ParameterChange {
-          enumtype: pending_enum.0.clone(),
-          enumname: pending_enum.1.clone(),
-          params,
-        }
+        ParameterChange::from_params(
+          pending_enum.0.clone(),
+          pending_enum.1.clone(),
+          pending_enum.2,
+          |lhs, rhs| {
+            animator.get_parameter_state().is_enum_active(lhs, rhs)
+              || pending_enums
+                .iter()
+                .find(|e| e.0 == lhs && e.1 == rhs)
+                .is_some()
+          },
+        )
       })
       .collect()
   }
