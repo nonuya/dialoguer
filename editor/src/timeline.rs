@@ -92,14 +92,24 @@ pub struct Container {
   pub id: usize,
   pub name: String,
   pub blocks: Vec<TimelineBlock>,
+  global_id: usize,
 }
 
 impl Container {
   pub fn add_block(&mut self, value: TimelineBlockType) {
+    let id = self.global_id;
+    self.global_id += 1;
     self.blocks.push(TimelineBlock {
-      id: self.blocks.len(),
+      id,
       value,
     });
+  }
+
+  pub fn insert_block(&mut self, index: usize, mut block: TimelineBlock) {
+    let id = self.global_id;
+    self.global_id += 1;
+    block.id = id;
+    self.blocks.insert(index, block);
   }
 
   pub fn export_to_dialog_node(&self) -> core::dialog::DialogNode {
@@ -180,6 +190,7 @@ pub struct Timeline {
   selected_container_id: Option<usize>,
   // (container_id, block_id) — estable aunque se reordenen los Vec
   selected_block: Option<(usize, usize)>,
+  global_id: usize,
 }
 
 impl Timeline {
@@ -243,12 +254,14 @@ impl Timeline {
         containers.push(Container {
           id,
           name: node.label.to_string(),
+          global_id: blocks.len(),
           blocks,
         });
       }
     }
 
     Self {
+      global_id: containers.len(),
       containers,
       drag: None,
       container_drag: None,
@@ -259,6 +272,7 @@ impl Timeline {
 
   pub fn new_empty() -> Self {
     Self {
+      global_id: 0,
       containers: Vec::new(),
       drag: None,
       container_drag: None,
@@ -558,13 +572,26 @@ impl Timeline {
       return None;
     }
   }
+  pub fn get_mut_container_by_index(&mut self, index: usize) -> Option<&mut Container> {
+    self.containers.get_mut(index)
+  }
 
   pub fn push_back_container(&mut self, name: String) {
+    let id = self.global_id;
+    self.global_id += 1;
     self.containers.push(Container {
-      id: self.containers.len(),
+      id,
       name,
       blocks: Vec::new(),
+      global_id: 0,
     });
+  }
+
+  pub fn insert_container(&mut self, index: usize, mut container: Container) {
+    let id = self.global_id;
+    self.global_id += 1;
+    container.id = id;
+    self.containers.insert(index, container);
   }
 
   pub fn delete_container(&mut self, id: usize) {

@@ -1,5 +1,5 @@
 use dear_imgui_rs::*;
-use log::{info, warn};
+use log::{debug, info, warn};
 use std::rc::Rc;
 
 use crate::{graph, timeline};
@@ -646,14 +646,17 @@ impl Layout {
         }
       }
 
+      let is_window_focused = ui.is_window_focused_with_flags(FocusedFlags::ROOT_AND_CHILD_WINDOWS);
+
       match selected {
         Selection::Block {
           block,
           container_index,
           ..
         } => {
-          if ui.is_window_focused() {
+          if is_window_focused {
             if ui.io().key_ctrl() && ui.is_key_pressed(Key::C) {
+              debug!("Copied Block {} from Container {}", block.id, container_index);
               self.copied_block = Some(block.clone());
             }
 
@@ -695,8 +698,9 @@ impl Layout {
             container.add_block(TimelineBlockType::Next);
           }
 
-          if ui.is_window_focused() {
+          if is_window_focused {
             if ui.io().key_ctrl() && ui.is_key_pressed(Key::C) {
+              debug!("Copied Container {}", index);
               self.copied_container = Some(container.clone());
             }
 
@@ -721,11 +725,16 @@ impl Layout {
     }
 
     if let Some(cmd) = pending_paste_container.take() {
-      unimplemented!("Implementar copia aqui");
+      debug!("Pasting Container in {}", cmd.0);
+      let timeline = self.graph.get_mut_selected_timeline().unwrap();
+      timeline.insert_container(cmd.0, cmd.1.clone());
     }
 
     if let Some(cmd) = pending_paste_block.take() {
-      unimplemented!("Implementar paste aqui");
+      debug!("Pasting Block in Container {}", cmd.0);
+      let timeline = self.graph.get_mut_selected_timeline().unwrap();
+      let container = timeline.get_mut_container_by_index(cmd.0).unwrap();
+      container.insert_block(cmd.1, cmd.2.clone());
     }
 
     if let Some(idx) = pending_play.take() {
