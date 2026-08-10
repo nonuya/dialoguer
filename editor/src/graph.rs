@@ -1,6 +1,5 @@
 use std::{
-  collections::{HashMap, HashSet, VecDeque},
-  rc::Rc,
+  collections::{HashMap, HashSet, VecDeque}, fs::OpenOptions, io::Write, path::Path, rc::Rc
 };
 
 use anyhow::Context;
@@ -1150,6 +1149,89 @@ impl Graph {
     }
 
     Ok(dialogs)
+  }
+
+  pub fn export_to_path(&self, path: &Path) -> anyhow::Result<()> {
+    use core::dialog::Dialog;
+
+    let mut file = OpenOptions::new()
+      .write(true)
+      .truncate(true)
+      .open(path)?;
+
+    for node in &self.nodes {
+      match node {
+        Node::Conversation {
+          id, name, output, ..
+        } => {
+          let timeline = self.timelines.get(id).context("Failed to get Timeline")?;
+          let mut dialog = timeline.export_to_dialog();
+          let mut jump = None;
+          let mut set_main_choicer = None;
+
+          // Si tiene un nodo de salida
+          if let Some(next) = self.follow(*output) {
+            match &mut dialog {
+              Dialog::Conversation(_) => {
+                jump = Some(next.name());
+              }
+              Dialog::Choicer(_) => {
+                unreachable!();
+              }
+            }
+          }
+
+          // Si tiene un flow nodo de salida
+          if let Some(next) = self.flow_follow(*output) {
+            match &mut dialog {
+              Dialog::Conversation(nodes) => {
+                set_main_choicer = Some(next.name());
+              }
+              Dialog::Choicer(_) => {
+                unreachable!();
+              }
+            }
+          }
+          
+          writeln!(file, "[{name}]")?;
+          let timeline = self.timelines.get(id).context("Failed to get Timeline")?;
+          timeline.export_to_file(
+            &mut file,
+            set_main_choicer,
+            jump
+          )?;
+          writeln!(file, "===")?;
+        }
+        Node::Choicer {
+          name,
+          options,
+          outputs,
+          ..
+        } => {
+          let mut valid_options = Vec::new();
+          for (option, output) in options.iter().zip(outputs) {
+            match self.follow(*output) {
+              Some(next) => {
+                valid_options.push((option, next));
+              }
+              None => {
+                warn!("Skipping '{}' because it doesnt have an output node.", name);
+              }
+            }
+          }
+
+          writeln!(file, "[[{name}]]")?;
+          for o in valid_options {
+            writeln!(file, "-> {}", o.0)?;
+            writeln!(file, "  @jump <{}>", o.1.name())?;
+          }
+          writeln!(file, "===")?;
+        }
+      }
+      writeln!(file, "")?;
+    }
+
+    Ok(())
   }
 
   fn follow(&self, output: PinId) -> Option<&Node> {

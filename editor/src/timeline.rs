@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{fs::File, io::Write, rc::Rc};
 
 use dear_imgui_rs::*;
 
@@ -26,9 +26,7 @@ pub struct TimelineSetBlockType {
 
 impl TimelineSetBlockType {
   pub fn is_empty(&self) -> bool {
-    self.parameters.is_empty()
-      && self.view.is_empty()
-      && self.anim.0.is_empty()
+    self.parameters.is_empty() && self.view.is_empty() && self.anim.0.is_empty()
   }
 }
 
@@ -99,10 +97,7 @@ impl Container {
   pub fn add_block(&mut self, value: TimelineBlockType) {
     let id = self.global_id;
     self.global_id += 1;
-    self.blocks.push(TimelineBlock {
-      id,
-      value,
-    });
+    self.blocks.push(TimelineBlock { id, value });
   }
 
   pub fn insert_block(&mut self, index: usize, mut block: TimelineBlock) {
@@ -150,6 +145,39 @@ impl Container {
       label: self.name.as_str().into(),
       events,
     }
+  }
+
+  pub fn export_to_file(&self, file: &mut File) -> anyhow::Result<()> {
+    for b in &self.blocks {
+      match &b.value {
+        TimelineBlockType::Wait(seconds) => {
+          writeln!(file, "  @wait {:.2}", seconds)?;
+        }
+        TimelineBlockType::Text(text) => {
+          writeln!(file, "  {text}")?;
+        }
+        TimelineBlockType::Set(TimelineSetBlockType {
+          parameters,
+          anim,
+          view,
+        }) => {
+          if !anim.0.is_empty() {
+            writeln!(file, "  @play {} {}", anim.0, if anim.1 { "" } else { "once" })?;
+          }
+
+          if !view.is_empty() {
+            writeln!(file, "  @set ViewType.{view}")?;
+          }
+
+          for p in parameters {
+            writeln!(file, "  @set {}.{}", p.0, p.1)?;
+          }
+        }
+        TimelineBlockType::Next => writeln!(file, "  @next")?,
+      }
+    }
+
+    Ok(())
   }
 }
 
@@ -219,14 +247,14 @@ impl Timeline {
           }
           Event::PlayAnimation(name, looped) => {
             pending_set.anim = (name.clone(), *looped);
-          },
+          }
           Event::RemoveEnum(name) => pending_set
             .parameters
             .push((name.clone(), "NonControl".into())),
           Event::SetView(name) => pending_set.view = name.clone(),
           Event::SetMainChoicer(_) => {
             // Managed by Graph
-          },
+          }
           other => {
             if !pending_set.is_empty() {
               add_block(TimelineBlockType::Set(std::mem::take(&mut pending_set)));
@@ -618,5 +646,29 @@ impl Timeline {
       .collect();
 
     core::dialog::Dialog::Conversation(dialogs)
+  }
+
+  pub fn export_to_file(
+    &self,
+    file: &mut File,
+    mut set_main_choicer: Option<&String>,
+    mut jump: Option<&String>,
+  ) -> anyhow::Result<()> {
+    for c in &self.containers {
+      writeln!(file, "{}:", c.name)?;
+
+      if let Some(name) = set_main_choicer.take() {
+        writeln!(file, "@setmainchoicer [[{name}]]")?;
+      }
+
+      c.export_to_file(file)?;
+    }
+
+    if let Some(name) = jump.take() {
+      writeln!(file, "Player:")?;
+      writeln!(file, "  @jump <{name}>")?;
+    }
+
+    Ok(())
   }
 }

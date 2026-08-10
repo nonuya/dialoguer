@@ -1,5 +1,6 @@
 # dialoguer
 Dialogue system for Rust using OpenGL & Live2D.
+* At the moment, enum edition is by text editor.
 
 ## Features
 + Simple human-readable dialog script (See [Dialog Script](#dialog-script)).
@@ -8,6 +9,8 @@ Dialogue system for Rust using OpenGL & Live2D.
 + Smooth and Fixed Parameter Changes.
 + Visual Editor with Graph and Parameter Editor (See [Editor](#editor)).
 + Undo/Redo for Graph Editor
++ Turn on parameters while animation runs
++ Save Dialog
 
 ## Texture Compression
 Use below command for create an ASTC texture.
@@ -22,7 +25,7 @@ Using `chusmky` (https://docs.rs/chumsky/latest/chumsky/) for parse dialogs.
 ### Events:
 + Text
 + SetMainChoicer
-+ SetAnim
++ PlayAnimation
 + Jump
 + SetParameter
 + RemoveParameter
@@ -42,7 +45,7 @@ Using `chusmky` (https://docs.rs/chumsky/latest/chumsky/) for parse dialogs.
 [Conversation]
 Player:
   @setmainchoicer [[Choicer]] // [[Choicer]]
-  @set AnimType.MyAnim // AnimType.(name of animation file)
+  @play MyAnim // AnimType.(name of animation file without spaces)
   @set MyEnum.Value1 // Set parameter
   @set MyEnum1.NonControl // Remove parameter
   // Setting from up to down

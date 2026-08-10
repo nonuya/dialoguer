@@ -1,6 +1,6 @@
 use dear_imgui_rs::*;
 use log::{debug, info, warn};
-use std::rc::Rc;
+use std::{path::Path, rc::Rc};
 
 use crate::{graph, timeline};
 
@@ -11,6 +11,8 @@ pub struct EditorContext<'a> {
   pub dialog_mgr: &'a mut core::dialog::DialogManager,
   pub dialog_player: &'a mut Option<core::dialog::DialogPlayer>,
   pub motion_mgr: &'a core::live2d::animator::MotionManager,
+  pub enummap_path: &'a Path,
+  pub dialog_path: &'a Path,
 }
 
 pub struct Layout {
@@ -41,7 +43,7 @@ impl Layout {
       node_editor: dear_node_editor::EditorContext::create(imgui_context),
       selected_enum: None,
       enumlog: Vec::new(),
-      is_main_layout: false,
+      is_main_layout: true,
       open_modal: false,
       graph: graph::Graph::new(dialog_mgr),
       new_modal_string: String::new(),
@@ -63,7 +65,7 @@ impl Layout {
     &mut self.enum_parameter_state
   }
 
-  pub fn draw(&mut self, ui: &mut Ui, ctx: EditorContext) {
+  pub fn draw(&mut self, ui: &mut Ui, mut ctx: EditorContext) {
     if ui.io().key_alt() && ui.is_key_pressed(Key::Key1) {
       self.is_main_layout = true;
       self.layout_initialized = false;
@@ -74,14 +76,31 @@ impl Layout {
       self.layout_initialized = false;
     }
 
+    if ui.io().key_alt() && ui.is_key_pressed(Key::R) {
+      self.reload_enummap(&mut ctx);
+    }
+
+    if ui.io().key_ctrl() && ui.is_key_pressed(Key::S) {
+      self.save_dialog(&ctx);
+    }
+
     if let Some(_) = ui.begin_main_menu_bar() {
+      ui.menu("File", || {
+        if ui.menu_item("(R)eset Enum") {
+          self.reload_enummap(&mut ctx);
+        }
+        if ui.menu_item("(S)ave") {
+          self.save_dialog(&ctx);
+        }
+      });
+
       ui.menu("View", || {
-        if ui.menu_item("Dialog") {
+        if ui.menu_item("(1) Dialog") {
           self.is_main_layout = true;
           self.layout_initialized = false;
         }
 
-        if ui.menu_item("Enum") {
+        if ui.menu_item("(2) Enum") {
           self.is_main_layout = false;
           self.layout_initialized = false;
         }
@@ -92,6 +111,27 @@ impl Layout {
       self.draw_dialogue_layout(ui, ctx);
     } else {
       self.draw_enum_layout(ui, ctx);
+    }
+  }
+
+  fn reload_enummap(&self, ctx: &mut EditorContext) {
+    debug!("Reloading EnumMap in {}", ctx.enummap_path.display());
+    match core::live2d::animator::load_enum_map(ctx.enummap_path) {
+      Ok(enummap) => {
+        *ctx.enummap = enummap;
+        debug!("Reloaded EnumMap!!!");
+      },
+      Err(e) => {
+        warn!("Failed to Reloading EnumMap: {e}");
+      }
+    }
+  }
+
+  fn save_dialog(&self, ctx: &EditorContext) {
+    debug!("Exporting Dialog to {}", ctx.dialog_path.display());
+    match self.graph.export_to_path(ctx.dialog_path) {
+      Ok(()) => debug!("Exported Dialog!!!!!!!!"),
+      Err(e) => warn!("Failed to export dialog: {e}")
     }
   }
 

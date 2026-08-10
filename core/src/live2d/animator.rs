@@ -8,7 +8,7 @@ use std::{
 use crate::live2d::Model;
 use anyhow::Context;
 use cubism::motion::Motion;
-use log::{debug, warn};
+use log::{info, warn};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
@@ -425,7 +425,7 @@ impl MotionManager {
       .iter()
       .map(|m| path.join(&m.file))
       .map(|path| {
-        debug!("[Live2D] Loading Motion '{}'", path.display());
+        info!("[Live2D] Loading Motion '{}'", path.display());
         let name = path
           .file_prefix()
           .and_then(|p| p.to_str())

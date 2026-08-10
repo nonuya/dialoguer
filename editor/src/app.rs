@@ -27,6 +27,8 @@ pub struct App {
   dialog_mgr: core::dialog::DialogManager,
   dialog_player: Option<core::dialog::DialogPlayer>,
   motion_mgr: core::live2d::animator::MotionManager,
+  enummap_path: PathBuf,
+  dialog_path: PathBuf,
   layout: Layout,
 }
 
@@ -100,8 +102,10 @@ impl App {
       motion_mgr,
       animator: core::live2d::animator::Animator::new(enummap.views.get("Default").unwrap().clone()),
       enummap,
+      enummap_path,
       layout: Layout::new(imgui_context, &dialog_mgr),
       dialog_mgr,
+      dialog_path,
       dialog_player: None,
     })
   }
@@ -139,6 +143,8 @@ impl App {
       dialog_mgr: &mut self.dialog_mgr,
       dialog_player: &mut self.dialog_player,
       motion_mgr: &self.motion_mgr,
+      enummap_path: &self.enummap_path,
+      dialog_path: &self.dialog_path
     };
     self.layout.draw(ui, ctx);
 

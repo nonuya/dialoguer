@@ -21,11 +21,15 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowAttributes};
 
-fn window_attributes() -> WindowAttributes {
-  Window::default_attributes().with_title("Dialoguer Editor")
+fn get_project_folder_path() -> String {
+  let mut args = std::env::args();
+  args.next().unwrap();
+  args.next().expect("expected project path")
 }
 
 fn main() -> anyhow::Result<()> {
+  let path = get_project_folder_path();
+  let attributes = Window::default_attributes().with_title(format!("Dialoguer - {path}"));
   env_logger::init();
   // The template will match only the configurations supporting rendering
   // to windows.
@@ -37,9 +41,9 @@ fn main() -> anyhow::Result<()> {
   // with transparency ourselves inside the `reduce`.
   let template = ConfigTemplateBuilder::new().with_alpha_size(8);
 
-  let display_builder = DisplayBuilder::new().with_window_attributes(Some(window_attributes()));
+  let display_builder = DisplayBuilder::new().with_window_attributes(Some(attributes));
   let event_loop = EventLoop::new()?;
-  let mut main_window = MainWindow::new(template, display_builder);
+  let mut main_window = MainWindow::new(template, display_builder, path);
   event_loop.run_app(&mut main_window)?;
 
   Ok(())
@@ -53,6 +57,7 @@ struct MainWindow {
   gl_context: Option<PossiblyCurrentContext>,
   gl_display: GlDisplayCreationState,
   imgui_state: Option<ImGuiState>,
+  project_path: String,
 }
 
 struct ImGuiState {
@@ -93,7 +98,7 @@ impl ApplicationHandler for MainWindow {
         debug!("Recreating window in `resumed`");
         // Pick the config which we already use for the context.
         let gl_config = self.gl_context.as_ref().unwrap().config();
-        match glutin_winit::finalize_window(event_loop, window_attributes(), &gl_config) {
+        match glutin_winit::finalize_window(event_loop, WindowAttributes::default(), &gl_config) {
           Ok(window) => (window, gl_config),
           Err(err) => {
             error!("[OsError] {:#}", err);
@@ -151,7 +156,7 @@ impl ApplicationHandler for MainWindow {
       renderer.new_frame().unwrap();
 
       match App::new(
-        PathBuf::from("iav_013_2"),
+        PathBuf::from(&self.project_path),
         &mut renderer,
         &context,
       ) {
@@ -332,7 +337,7 @@ enum GlDisplayCreationState {
 }
 
 impl MainWindow {
-  fn new(template: ConfigTemplateBuilder, display_builder: DisplayBuilder) -> Self {
+  fn new(template: ConfigTemplateBuilder, display_builder: DisplayBuilder, project_path: String) -> Self {
     Self {
       template,
       gl_display: GlDisplayCreationState::Builder(Box::new(display_builder)),
@@ -340,6 +345,7 @@ impl MainWindow {
       state: None,
       app: None,
       imgui_state: None,
+      project_path,
     }
   }
 }
