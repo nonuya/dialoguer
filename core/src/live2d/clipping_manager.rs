@@ -20,7 +20,6 @@ pub struct ClippingContext {
 
 impl ClippingContext {
   pub fn get_draw_indices(&self) -> &Vec<i32> {
-
     &self.ids
   }
 
@@ -472,7 +471,7 @@ impl ClippingManager {
 
     let mut graph = ClippingGraph::new(cubism);
     let offscreens = (0..mask_buffer_count)
-      .map(|_| {create_texture()})
+      .map(|_| create_texture())
       .collect::<anyhow::Result<Vec<_>>>()?;
 
     graph.setup(cubism, mask_buffer_count);

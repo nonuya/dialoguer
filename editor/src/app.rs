@@ -1,136 +1,70 @@
-use anyhow::Context;
-use chumsky::Parser;
-use core::renderer::RenderContext;
-use dear_imgui_glow::GlowRenderer;
-use dear_imgui_rs::*;
-use std::{
-  fs::{self, File},
-  path::PathBuf,
-  rc::Rc,
-};
-use winit::{
-  event::KeyEvent,
-  keyboard::{KeyCode, PhysicalKey},
-};
+use std::{path::PathBuf, rc::Rc};
 
-use crate::layout::{EditorContext, Layout};
+use crate::{
+  project::{ProjectAssets, ProjectManifest}, runtime::EditorRuntime, ui::{UiState, draw_editor},
+};
+use winit::event::KeyEvent;
 
 pub struct App {
-  ctx: Rc<RenderContext>,
-  texture_id: TextureId,
-  model: core::live2d::Model,
-  enummap: core::live2d::animator::EnumMap,
-  model_renderer: core::renderer::ModelRenderer,
-  blackscreen_renderer: core::renderer::BlackScreenRenderer,
-  texture_target: core::renderer::TextureTarget,
-  animator: core::live2d::animator::Animator,
-  dialog_mgr: core::dialog::DialogManager,
-  dialog_player: Option<core::dialog::DialogPlayer>,
-  motion_mgr: core::live2d::animator::MotionManager,
-  enummap_path: PathBuf,
-  dialog_path: PathBuf,
-  layout: Layout,
+  assets: ProjectAssets,
+  runtime: EditorRuntime,
+  ui_state: UiState,
+  // ui: EditorUI,
 }
+
+// EditorState for ImGUI mutable
+// tal vez así pueda usar funciones en vez de estructuras, así evitaría el &mut self que me jode bastante
 
 impl App {
   pub fn new(
     model_path: PathBuf,
-    renderer: &mut GlowRenderer,
+    gl: Rc<glow::Context>,
     imgui_context: &dear_imgui_rs::Context,
+    imgui_renderer: &mut dear_imgui_glow::GlowRenderer,
   ) -> anyhow::Result<Self> {
-    let gl = renderer.gl_context().unwrap().clone();
+    let manifest = ProjectManifest::from_path(&model_path)?;
+    let assets = ProjectAssets::load(&manifest)?;
+    let runtime = EditorRuntime::new(&manifest, &assets, gl)?;
+    let ui_state = UiState::new(&runtime, imgui_context, imgui_renderer);
 
-    let model_name = model_path
-      .file_name()
-      .ok_or_else(|| anyhow::anyhow!("Fail to get model name from '{}'", model_path.display()))?;
-
-    let model_file =
-      File::open(model_path.join(format!("{}.model3.json", model_name.display()))).context(
-        format!("Failed to read .model3.json in '{}'", model_path.display()),
-      )?;
-
-    let model3 = cubism::json::model::Model3::from_reader(model_file).context(format!(
-      "Failed to parse '{}.model3.json'",
-      model_name.display()
-    ))?;
-    let layout = model3.layout.context("model3.json doesnt have Layout")?;
-    log::info!("Model Layout: {:#?}", layout);
-    let mut model = core::live2d::Model::new(gl.clone(), &model_path, &model3)?;
-    model.save_parameters();
-
-    let mut enummap_path = model_path.join(model_name);
-    enummap_path.set_extension("map");
-    let enummap = core::live2d::animator::load_enum_map(&enummap_path)?;
-
-    let ctx = Rc::from(core::renderer::RenderContext::from_gl(gl));
-
-    let model_renderer = core::renderer::ModelRenderer::new(ctx.clone(), layout)
-      .context("Failed to create Live2D Renderer")?;
-    let texture_target =
-      core::renderer::TextureTarget::new(ctx.clone(), layout.width as u32, layout.height as u32)?;
-    let blackscreen_renderer = core::renderer::BlackScreenRenderer::new(ctx.clone())?;
-
-    let texture_id = TextureId::new(1000);
-    renderer
-      .texture_map_mut()
-      .set(texture_id, texture_target.tex());
-
-    let motion_mgr = core::live2d::animator::MotionManager::new(&model_path, &model3)
-      .context("Failed to read motions")?;
-
-    let mut dialog_path = model_path.join(model_name);
-    dialog_path.set_extension("dialog");
-
-    let dialog_src = fs::read_to_string(&dialog_path)
-      .context(format!("Failed to read {}", dialog_path.display()))?;
-
-    let dialog_tokens = core::dialog::dialog_block_lexer()
-      .parse(&dialog_src)
-      .into_result()
-      .map_err(|err| anyhow::anyhow!("Dialog Block Lexer {:#?}", err))?;
-
-    let dialog_mgr = core::dialog::DialogManager::new_from_tokens(dialog_tokens)
-      .context("Failed to create DialogManager")?;
+    // let ui = EditorUI::new(&core, imgui_context, imgui_renderer);
 
     Ok(Self {
-      ctx,
-      texture_id,
-      model,
-      model_renderer,
-      blackscreen_renderer,
-      texture_target,
-      motion_mgr,
-      animator: core::live2d::animator::Animator::new(enummap.views.get("Default").unwrap().clone()),
-      enummap,
-      enummap_path,
-      layout: Layout::new(imgui_context, &dialog_mgr),
-      dialog_mgr,
-      dialog_path,
-      dialog_player: None,
+      assets,
+      runtime,
+      ui_state,
     })
   }
 
   pub fn update(&mut self, deltatime: f32) {
-    if let Some(player) = &mut self.dialog_player {
-      player.update(
-        &mut self.animator,
-        &self.dialog_mgr,
-        &self.enummap,
-        &self.motion_mgr,
-      );
-    }
+    // self.core.update(deltatime);
 
-    self.animator.update(deltatime, &mut self.model, &self.enummap);
+    /*
+
+    self
+      .animator
+      .update(deltatime, &mut self.model, &self.enummap);
 
     if !self.layout.is_main_layout() {
-      self.layout.mut_enum_parameter_state().update_model(deltatime, &mut self.model);
+      self
+        .layout
+        .mut_enum_parameter_state()
+        .update_model(deltatime, &mut self.model);
       self.model.update_parameters();
-    }
+    }*/
   }
 
-  pub fn draw(&mut self, ui: &mut Ui) {
+  pub fn draw(&mut self, ui: &dear_imgui_rs::Ui) {
+    draw_editor(ui, &self.assets, &mut self.ui_state);
+
+    // self.core.draw_model();
+    // let mut layout = self.layout.get_mut();
+    // layout.draw(ui);
+    /*
     self.texture_target.draw(|| {
-      self.model_renderer.draw(&self.model, self.animator.get_matrix());
+      self
+        .model_renderer
+        .draw(&self.model, self.animator.get_matrix());
       self
         .blackscreen_renderer
         .draw(self.animator.blackscreen_alpha());
@@ -144,7 +78,7 @@ impl App {
       dialog_player: &mut self.dialog_player,
       motion_mgr: &self.motion_mgr,
       enummap_path: &self.enummap_path,
-      dialog_path: &self.dialog_path
+      dialog_path: &self.dialog_path,
     };
     self.layout.draw(ui, ctx);
 
@@ -178,11 +112,13 @@ impl App {
         .uv1([1.0, 0.0])
         .build();
     });
+    */
   }
 
   pub fn resize(&mut self, width: u32, height: u32) {}
 
   pub fn keyboard(&mut self, event: KeyEvent) {
+    /*
     if let Some(dialog_player) = &mut self.dialog_player {
       if !event.state.is_pressed() {
         match event.physical_key {
@@ -201,6 +137,6 @@ impl App {
           _ => {}
         }
       }
-    }
+    }*/
   }
 }

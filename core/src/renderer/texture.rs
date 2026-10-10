@@ -1,19 +1,18 @@
-use std::{fs, path::Path};
 use anyhow::{Context, ensure};
 use glow::HasContext;
-use log::debug;
+use std::{fs, path::Path};
 
 pub fn load_texture_from_astc_path(
   gl: &glow::Context,
   filepath: &Path,
 ) -> anyhow::Result<glow::Texture> {
   let bytes = fs::read(&filepath).context("Failed to read ASTC Texture")?;
+
+  load_texture_from_bytes(gl, &bytes)
+}
+
+fn load_texture_from_bytes(gl: &glow::Context, bytes: &[u8]) -> anyhow::Result<glow::Texture> {
   let astc = parse_astc_from_bytes(&bytes).context("Failed to parse ASTC file")?;
-  
-  debug!(
-    "Texture 2D loaded with w={} h={} with ASTC {}x{} path='{}'",
-    astc.dim_x, astc.dim_y, astc.block_x, astc.block_y, filepath.display()
-  );
 
   let texture = unsafe {
     gl.create_texture()

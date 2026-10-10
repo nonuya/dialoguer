@@ -1,75 +1,13 @@
 use std::{
   collections::{HashMap, VecDeque},
-  fs,
-  path::{Path, PathBuf},
+  path::Path,
   rc::Rc,
 };
 
-use crate::live2d::Model;
-use anyhow::Context;
+use crate::dialog::serializable;
+use crate::live2d::model::Model;
 use cubism::motion::Motion;
-use log::{info, warn};
-use serde::{Deserialize, Serialize};
-
-#[derive(Serialize, Deserialize)]
-pub struct EnumMap {
-  pub enums: HashMap<Rc<str>, EnumType>,
-  pub views: HashMap<Rc<str>, ViewType>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Copy)]
-pub struct ViewType {
-  pub position: (f32, f32, f32),
-  pub rotation: f32,
-  pub scale: f32,
-}
-
-#[derive(Serialize, Deserialize, Default)]
-pub struct EnumType {
-  pub values: HashMap<Rc<str>, Vec<ParamValue>>,
-}
-/// Ver "assets/example.map" para un ejemplo
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ParamValue {
-  pub name: Rc<str>,
-  pub value: Value,
-
-  #[serde(default)]
-  pub modification: Option<Modification>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Modification {
-  pub lhs: Rc<str>,
-  pub rhs: Rc<str>,
-  pub then: f32,
-}
-
-#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
-pub enum Value {
-  Fixed(f32),
-  Smooth {
-    #[serde(default = "default_actual")]
-    actual: f32,
-
-    target: f32,
-    step: f32,
-  },
-}
-
-fn default_actual() -> f32 {
-  0.0
-}
-
-impl Value {
-  pub fn smooth(target: f32, step: f32) -> Self {
-    Self::Smooth {
-      actual: 0.0,
-      target,
-      step,
-    }
-  }
-}
+use log::warn;
 
 enum FadeStatus {
   FadeIn(Motion, bool),
@@ -83,16 +21,18 @@ const FADE_STEP: f32 = 1.0 / FADE_DURATION;
 pub struct ParameterChange {
   pub enum_name: Rc<str>,
   pub value_name: Rc<str>,
-  pub params: Vec<(Rc<str>, Value)>,
+  pub params: Vec<(Rc<str>, serializable::Value)>,
 }
 
 impl ParameterChange {
   pub fn from_params(
     enum_name: Rc<str>,
     value_name: Rc<str>,
-    params: &Vec<ParamValue>,
+    params: &Vec<serializable::ParamValue>,
     mod_predicate: impl Fn(&Rc<str>, &Rc<str>) -> bool,
   ) -> Self {
+    use serializable::Value;
+
     let params: Vec<_> = params
       .iter()
       .map(|p| {
@@ -130,7 +70,7 @@ impl ParameterChange {
 }
 
 pub struct ParameterState {
-  parameters_map: HashMap<Rc<str>, Value>,
+  parameters_map: HashMap<Rc<str>, serializable::Value>,
   activeenum_map: HashMap<Rc<str>, Rc<str>>,
 }
 
@@ -157,7 +97,8 @@ impl ParameterState {
       .insert(change.enum_name, change.value_name);
   }
 
-  fn set_parameter(&mut self, id: Rc<str>, mut value: Value) {
+  fn set_parameter(&mut self, id: Rc<str>, mut value: serializable::Value) {
+    use serializable::Value;
     // If we change an existing value, we need to start from that value and go to new value
     if let Some(old) = self.parameters_map.get(&id) {
       match (old, &mut value) {
@@ -198,7 +139,7 @@ impl ParameterState {
       .is_some_and(|v| v.as_ref() == value_name.as_ref())
   }
 
-  pub fn remove_enum(&mut self, name: &Rc<str>, enummap: &EnumMap) {
+  pub fn remove_enum(&mut self, name: &Rc<str>, enummap: &serializable::ModelDefinition) {
     if let Some(value_name) = self.activeenum_map.remove(name)
       && let Some(params) = enummap.enums.get(name).unwrap().values.get(&value_name)
     {
@@ -209,6 +150,7 @@ impl ParameterState {
   }
 
   pub fn update_model(&mut self, deltatime: f32, model: &mut Model) {
+    use serializable::Value;
     for (id, value) in &mut self.parameters_map {
       match value {
         Value::Fixed(val) => {
@@ -223,7 +165,7 @@ impl ParameterState {
         } => {
           if actual != target {
             let delta = *target - *actual;
-            let step = *step * deltatime * 30.0;
+            let step = *step * deltatime * 40.0;
 
             if delta.abs() <= step {
               *actual = *target;
@@ -246,15 +188,15 @@ pub struct Animator {
   fade_status: FadeStatus,
   timer: Option<f32>,
   blackscreen_alpha: f32,
-  view: ViewType,
-  target_view: ViewType,
+  view: serializable::ViewType,
+  target_view: serializable::ViewType,
   pending_set_parameter: VecDeque<ParameterChange>,
   pending_remove_enum: VecDeque<Rc<str>>,
   parameter_state: ParameterState,
 }
 
 impl Animator {
-  pub fn new(initial_view: ViewType) -> Self {
+  pub fn new(initial_view: serializable::ViewType) -> Self {
     Self {
       motion: None,
       timer: None,
@@ -299,11 +241,11 @@ impl Animator {
     self.timer.is_some() || matches!(self.fade_status, FadeStatus::FadeIn(..))
   }
 
-  pub fn set_target_view(&mut self, target_view: ViewType) {
+  pub fn set_target_view(&mut self, target_view: serializable::ViewType) {
     self.target_view = target_view;
   }
 
-  pub fn set_view(&mut self, view: ViewType) {
+  pub fn set_view(&mut self, view: serializable::ViewType) {
     self.view = view;
   }
 
@@ -336,7 +278,12 @@ impl Animator {
   }
 
   // FIXME: Hay un Delay en Wait, no sé si termina el Wait y se espera unos microsegundos para empezar
-  pub fn update(&mut self, deltatime: f32, model: &mut Model, enummap: &EnumMap) {
+  pub fn update(
+    &mut self,
+    deltatime: f32,
+    model: &mut Model,
+    enummap: &serializable::ModelDefinition,
+  ) {
     // Fade
     match std::mem::replace(&mut self.fade_status, FadeStatus::None) {
       FadeStatus::FadeIn(motion, looped) => {
@@ -414,46 +361,14 @@ impl Animator {
   }
 }
 
-pub struct MotionManager(HashMap<Rc<str>, Motion>);
+pub struct MotionManager(pub HashMap<Rc<str>, Rc<Motion>>);
 
 impl MotionManager {
-  pub fn new(path: &PathBuf, model3: &cubism::json::model::Model3) -> anyhow::Result<Self> {
-    let motions = model3
-      .file_references
-      .motions
-      .idle
-      .iter()
-      .map(|m| path.join(&m.file))
-      .map(|path| {
-        info!("[Live2D] Loading Motion '{}'", path.display());
-        let name = path
-          .file_prefix()
-          .and_then(|p| p.to_str())
-          .context("Failed to get Motion name")?;
-        let motion = cubism::motion::Motion::from_motion3_json(&path)?;
-
-        Ok((name.into(), motion))
-      })
-      .collect::<anyhow::Result<HashMap<_, _>>>()?;
-    // let motions = HashMap::new();
-
-    Ok(Self(motions))
-  }
-
   pub fn names(&self) -> Vec<&Rc<str>> {
     self.0.keys().collect()
   }
 
-  pub fn get(&self, name: &str) -> Option<&Motion> {
+  pub fn get(&self, name: &str) -> Option<&Rc<Motion>> {
     self.0.get(name)
   }
-}
-
-pub fn load_enum_map(filepath: &Path) -> anyhow::Result<EnumMap> {
-  let src =
-    fs::read_to_string(filepath).context(format!("Failed to load {}", filepath.display()))?;
-
-  let myenums: EnumMap = ron::from_str(&src).context("Failed to parse DialogMap")?;
-
-  Ok(myenums)
 }

@@ -1,8 +1,7 @@
-mod clipping_manager;
-mod rectf;
-mod texture;
-mod model;
 pub mod animator;
+mod clipping_manager;
 pub mod config;
+mod model;
+mod rectf;
 
 pub use model::Model;

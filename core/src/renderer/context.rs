@@ -11,7 +11,10 @@ impl<'a> Drop for FramebufferGuard<'a> {
   fn drop(&mut self) {
     self.ctx.last_fbo.set(self.previous);
     unsafe {
-      self.ctx.gl.bind_framebuffer(glow::FRAMEBUFFER, self.previous);
+      self
+        .ctx
+        .gl
+        .bind_framebuffer(glow::FRAMEBUFFER, self.previous);
     }
   }
 }
@@ -25,7 +28,7 @@ impl RenderContext {
   pub fn from_gl(gl: Rc<glow::Context>) -> Self {
     Self {
       gl,
-      last_fbo: Cell::new(None)
+      last_fbo: Cell::new(None),
     }
   }
 
@@ -33,13 +36,16 @@ impl RenderContext {
     &self.gl
   }
 
-  pub (in crate) fn push_framebuffer(&self, fbo: Option<glow::Framebuffer>) -> FramebufferGuard<'_> {
+  pub(crate) fn push_framebuffer(&self, fbo: Option<glow::Framebuffer>) -> FramebufferGuard<'_> {
     let previous = self.last_fbo.replace(fbo);
 
     unsafe {
       self.gl.bind_framebuffer(glow::FRAMEBUFFER, fbo);
     }
 
-    FramebufferGuard { previous, ctx: self }
+    FramebufferGuard {
+      previous,
+      ctx: self,
+    }
   }
 }

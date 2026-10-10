@@ -1,6 +1,8 @@
 use crate::live2d::{Model, config};
 use crate::renderer::RenderContext;
+use crate::renderer::blackscreen::BlackScreenRenderer;
 use crate::renderer::shader::create_program_from_source;
+use anyhow::Context;
 use cubism::core::{ConstantFlags, DynamicFlags};
 use cubism::json::model::Layout;
 use glow::HasContext;
@@ -81,20 +83,83 @@ impl ModelShaders {
   }
 }
 
+struct TextureTarget {
+  fbo: glow::Framebuffer,
+  texture: glow::Texture,
+}
+
+impl TextureTarget {
+  fn new(ctx: &RenderContext, width: f32, height: f32) -> anyhow::Result<Self> {
+    let gl = ctx.get_context();
+    let texture = unsafe {
+      gl.create_texture()
+        .map_err(anyhow::Error::msg)
+        .context("Failed to create texture for render Model")?
+    };
+
+    unsafe {
+      gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+      gl.tex_image_2d(
+        glow::TEXTURE_2D,
+        0,
+        glow::RGBA8 as i32,
+        width as i32,
+        height as i32,
+        0,
+        glow::RGBA,
+        glow::UNSIGNED_BYTE,
+        glow::PixelUnpackData::Slice(None),
+      );
+      gl.tex_parameter_i32(
+        glow::TEXTURE_2D,
+        glow::TEXTURE_MIN_FILTER,
+        glow::LINEAR as i32,
+      );
+      gl.tex_parameter_i32(
+        glow::TEXTURE_2D,
+        glow::TEXTURE_MAG_FILTER,
+        glow::LINEAR as i32,
+      );
+      gl.bind_texture(glow::TEXTURE_2D, None);
+    }
+
+    let fbo = unsafe {
+      gl.create_framebuffer()
+        .map_err(anyhow::Error::msg)
+        .context("Failed to create framebuffer for render Model")?
+    };
+    unsafe {
+      let _fbo = ctx.push_framebuffer(Some(fbo));
+      gl.framebuffer_texture(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, Some(texture), 0);
+
+      anyhow::ensure!(gl.check_framebuffer_status(glow::FRAMEBUFFER) == glow::FRAMEBUFFER_COMPLETE);
+    }
+
+    Ok(Self { fbo, texture })
+  }
+}
+
 pub struct ModelRenderer {
+  blackscreen: BlackScreenRenderer,
   shaders: ModelShaders,
-  ctx: Rc<RenderContext>,
+  ctx: RenderContext,
   layout: Layout,
+  texture_target: TextureTarget,
 }
 
 impl ModelRenderer {
-  pub fn new(ctx: Rc<RenderContext>, layout: Layout) -> anyhow::Result<Self> {
-    let shaders = ModelShaders::new(ctx.get_context())?;
+  pub fn new(gl: Rc<glow::Context>, layout: Layout) -> anyhow::Result<Self> {
+    let shaders = ModelShaders::new(&gl)?;
+    let blackscreen = BlackScreenRenderer::new(gl.clone())?;
+    let ctx = RenderContext::from_gl(gl);
+    let texture_target = TextureTarget::new(&ctx, layout.width, layout.height)?;
 
     Ok(Self {
       ctx,
+      blackscreen,
       shaders,
       layout,
+      texture_target,
     })
   }
 
@@ -102,7 +167,14 @@ impl ModelRenderer {
     self.layout
   }
 
+  pub fn texture_target_id(&self) -> glow::Texture {
+    self.texture_target.texture
+  }
+
   pub fn draw(&self, model: &Model, matrix: glam::Mat4) {
+    // Drawing onto texture
+    let _fbo = self.ctx.push_framebuffer(Some(self.texture_target.fbo));
+
     let projection = glam::camera::rh::proj::opengl::orthographic(
       self.layout.x,
       self.layout.x + self.layout.width,
@@ -374,6 +446,9 @@ impl Drop for ModelRenderer {
       gl.delete_program(self.shaders.normal.program);
       gl.delete_program(self.shaders.masked.program);
       gl.delete_program(self.shaders.inverted_mask.program);
+
+      gl.delete_texture(self.texture_target.texture);
+      gl.delete_framebuffer(self.texture_target.fbo);
     }
   }
 }

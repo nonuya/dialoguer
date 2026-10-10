@@ -903,6 +903,7 @@ impl Layout {
     ctx: &mut EditorContext,
     start_point: Option<(String, Vec<(Rc<str>, core::dialog::Dialog)>)>,
   ) {
+    ctx.animator.stop_timer();
     match start_point {
       Some((name, entries)) => {
         *ctx.dialog_mgr = core::dialog::DialogManager::new_from_entries(entries);
@@ -913,7 +914,6 @@ impl Layout {
       }
       None => {
         ctx.model.load_saved_parameters();
-        ctx.animator.stop_timer();
         ctx.animator.get_mut_parameter_state().reset();
         ctx.animator.clear_motion();
         *ctx.dialog_player = None;

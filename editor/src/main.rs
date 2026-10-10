@@ -1,7 +1,7 @@
 mod app;
-mod graph;
-mod layout;
-mod timeline;
+mod project;
+mod runtime;
+mod ui;
 
 use crate::app::App;
 use glutin::config::{Config, ConfigTemplateBuilder, GetGlConfig};
@@ -21,43 +21,33 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowAttributes};
 
-fn get_project_folder_path() -> String {
-  let mut args = std::env::args();
-  args.next().unwrap();
-  args.next().expect("expected project path")
-}
-
 fn main() -> anyhow::Result<()> {
-  let path = get_project_folder_path();
-  let attributes = Window::default_attributes().with_title(format!("Dialoguer - {path}"));
   env_logger::init();
-  // The template will match only the configurations supporting rendering
-  // to windows.
-  //
-  // XXX We force transparency only on macOS, given that EGL on X11 doesn't
-  // have it, but we still want to show window. The macOS situation is like
-  // that, because we can query only one config at a time on it, but all
-  // normal platforms will return multiple configs, so we can find the config
-  // with transparency ourselves inside the `reduce`.
+
+  let project_path = std::env::args().nth(1).expect("expected project path");
+  let window_attributes =
+    Window::default_attributes().with_title(format!("Dialoguer - {project_path}"));
+  let display_builder = DisplayBuilder::new().with_window_attributes(Some(window_attributes));
+  let event_loop = EventLoop::new()?;
   let template = ConfigTemplateBuilder::new().with_alpha_size(8);
 
-  let display_builder = DisplayBuilder::new().with_window_attributes(Some(attributes));
-  let event_loop = EventLoop::new()?;
-  let mut main_window = MainWindow::new(template, display_builder, path);
-  event_loop.run_app(&mut main_window)?;
+  event_loop.run_app(&mut MainWindow::new(
+    template,
+    display_builder,
+    project_path,
+  ))?;
 
   Ok(())
 }
 
 struct MainWindow {
   template: ConfigTemplateBuilder,
+  project_path: String,
   app: Option<App>,
-  // NOTE: `AppState` carries the `Window`, thus it should be dropped after everything else.
+  imgui: Option<ImGuiState>,
   state: Option<AppState>,
   gl_context: Option<PossiblyCurrentContext>,
-  gl_display: GlDisplayCreationState,
-  imgui_state: Option<ImGuiState>,
-  project_path: String,
+  display: GlDisplayCreationState,
 }
 
 struct ImGuiState {
@@ -66,42 +56,44 @@ struct ImGuiState {
   renderer: dear_imgui_glow::GlowRenderer,
 }
 
+struct AppState {
+  surface: Surface<WindowSurface>,
+  window: Window,
+}
+
 impl ApplicationHandler for MainWindow {
   fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-    let (window, gl_config) = match &self.gl_display {
-      // We just created the event loop, so initialize the display, pick the config, and
-      // create the context.
-      GlDisplayCreationState::Builder(display_builder) => {
-        let (window, gl_config) =
-          match display_builder
+    let (window, config) = match &self.display {
+      GlDisplayCreationState::Builder(builder) => {
+        let (window, config) =
+          match builder
             .clone()
             .build(event_loop, self.template.clone(), gl_config_picker)
           {
-            Ok((window, gl_config)) => (window.unwrap(), gl_config),
+            Ok((Some(window), config)) => (window, config),
+            Ok((None, _)) => {
+              error!("[DisplayBuilder] failed to create a window");
+              event_loop.exit();
+              return;
+            }
             Err(err) => {
-              error!("[DisplayBuilder] {:#}", err);
+              error!("[DisplayBuilder] {err:#}");
               event_loop.exit();
               return;
             }
           };
 
-        // Mark the display as initialized to not recreate it on resume, since the
-        // display is valid until we explicitly destroy it.
-        self.gl_display = GlDisplayCreationState::Init;
-
-        // Create gl context.
-        self.gl_context = Some(create_gl_context(&window, &gl_config).treat_as_possibly_current());
-
-        (window, gl_config)
+        self.display = GlDisplayCreationState::Init;
+        self.gl_context = Some(create_gl_context(&window, &config).treat_as_possibly_current());
+        (window, config)
       }
       GlDisplayCreationState::Init => {
         debug!("Recreating window in `resumed`");
-        // Pick the config which we already use for the context.
-        let gl_config = self.gl_context.as_ref().unwrap().config();
-        match glutin_winit::finalize_window(event_loop, WindowAttributes::default(), &gl_config) {
-          Ok(window) => (window, gl_config),
+        let config = self.gl_context().config();
+        match glutin_winit::finalize_window(event_loop, WindowAttributes::default(), &config) {
+          Ok(window) => (window, config),
           Err(err) => {
-            error!("[OsError] {:#}", err);
+            error!("[Window] {err:#}");
             event_loop.exit();
             return;
           }
@@ -111,102 +103,46 @@ impl ApplicationHandler for MainWindow {
 
     let attrs = window
       .build_surface_attributes(Default::default())
-      .expect("Failed to build surface attributes");
-    let gl_surface = unsafe {
-      gl_config
+      .expect("failed to build surface attributes");
+    let surface = unsafe {
+      config
         .display()
-        .create_window_surface(&gl_config, &attrs)
-        .unwrap()
+        .create_window_surface(&config, &attrs)
+        .expect("failed to create window surface")
     };
-
-    // The context needs to be current for the Renderer to set up shaders and
-    // buffers. It also performs function loading, which needs a current context on
-    // WGL.
-    let gl_context = self.gl_context.as_ref().unwrap();
-    gl_context.make_current(&gl_surface).unwrap();
+    self
+      .gl_context()
+      .make_current(&surface)
+      .expect("failed to make GL context current");
 
     if self.app.is_none() {
-      use dear_imgui_rs::ConfigFlags;
-      // Setup Dear ImGui
-      let mut context = dear_imgui_rs::Context::create();
-      context
-        .io_mut()
-        .set_config_flags(ConfigFlags::DOCKING_ENABLE);
-      context.set_ini_filename(None::<String>).unwrap();
-      context
-        .fonts()
-        .add_font(&[dear_imgui_rs::FontSource::TtfData {
-          data: include_bytes!("NotoSansJP-Regular.ttf"),
-          size_pixels: None,
-          config: None,
-        }]);
-
-      let mut platform = dear_imgui_winit::WinitPlatform::new(&mut context);
-      platform.attach_window(&window, dear_imgui_winit::HiDpiMode::Default, &mut context);
-
-      // Create Glow context and renderer
-      let gl = unsafe {
-        glow::Context::from_loader_function_cstr(|s| {
-          gl_context.display().get_proc_address(s).cast()
-        })
-      };
-
-      let mut renderer = dear_imgui_glow::GlowRenderer::new(gl, &mut context).unwrap();
-      renderer.set_framebuffer_srgb_enabled(false);
-      renderer.new_frame().unwrap();
-
-      match App::new(
-        PathBuf::from(&self.project_path),
-        &mut renderer,
-        &context,
-      ) {
-        Ok(app) => self.app = Some(app),
-        Err(err) => {
-          error!("[Application] {:#}", err);
-          event_loop.exit();
-          return;
-        }
+      if let Err(err) = self.initialize_app(&window, event_loop) {
+        error!("[Application] {err:#}");
+        event_loop.exit();
+        return;
       }
-
-      self.imgui_state = Some(ImGuiState {
-        context,
-        platform,
-        renderer,
-      });
     }
 
-    // Try setting vsync.
-    if let Err(res) =
-      gl_surface.set_swap_interval(gl_context, SwapInterval::Wait(NonZeroU32::new(1).unwrap()))
-    {
-      error!("Error setting vsync: {res:?}");
+    if let Err(err) = surface.set_swap_interval(
+      self.gl_context(),
+      SwapInterval::Wait(NonZeroU32::new(1).expect("one is non-zero")),
+    ) {
+      error!("failed to enable vsync: {err:?}");
     }
 
-    assert!(
-      self
-        .state
-        .replace(AppState { gl_surface, window })
-        .is_none()
-    );
+    self.state = Some(AppState { surface, window });
   }
 
   fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
-    // This event is only raised on Android, where the backing NativeWindow for a GL
-    // Surface can appear and disappear at any moment.
-    debug!("Android window removed");
-
-    // Destroy the GL Surface and un-current the GL Context before ndk-glue releases
-    // the window back to the system.
+    debug!("Window suspended");
     self.state = None;
-
-    // Make context not current.
     self.gl_context = Some(
       self
         .gl_context
         .take()
-        .unwrap()
+        .expect("GL context is missing")
         .make_not_current()
-        .unwrap()
+        .expect("failed to release GL context")
         .treat_as_possibly_current(),
     );
   }
@@ -217,159 +153,182 @@ impl ApplicationHandler for MainWindow {
     _window_id: winit::window::WindowId,
     event: WindowEvent,
   ) {
-    if let Some(imgui) = self.imgui_state.as_mut()
-      && let Some(AppState { window, .. }) = self.state.as_ref()
-    {
+    if let (Some(imgui), Some(state)) = (self.imgui.as_mut(), self.state.as_ref()) {
       imgui
         .platform
-        .handle_window_event(&mut imgui.context, window, &event);
+        .handle_window_event(&mut imgui.context, &state.window, &event);
     }
 
     match event {
-      WindowEvent::Resized(size) if size.width != 0 && size.height != 0 => {
-        // Some platforms like EGL require resizing GL surface to update the size
-        // Notable platforms here are Wayland and macOS, other don't require it
-        // and the function is no-op, but it's wise to resize it for portability
-        // reasons.
-        if let Some(AppState {
-          gl_surface,
-          window: _,
-        }) = self.state.as_ref()
-        {
-          let gl_context = self.gl_context.as_ref().unwrap();
-          gl_surface.resize(
-            gl_context,
-            NonZeroU32::new(size.width).unwrap(),
-            NonZeroU32::new(size.height).unwrap(),
+      WindowEvent::Resized(size) if size.width > 0 && size.height > 0 => {
+        if let Some(state) = self.state.as_ref() {
+          state.surface.resize(
+            self.gl_context(),
+            NonZeroU32::new(size.width).expect("width is non-zero"),
+            NonZeroU32::new(size.height).expect("height is non-zero"),
           );
-
-          let app = self.app.as_mut().unwrap();
+        }
+        if let Some(app) = self.app.as_mut() {
           app.resize(size.width, size.height);
         }
       }
       WindowEvent::CloseRequested => event_loop.exit(),
-      WindowEvent::KeyboardInput { event, .. } => self.app.as_mut().unwrap().keyboard(event),
-      _ => (),
+      WindowEvent::KeyboardInput { event, .. } => {
+        if let Some(app) = self.app.as_mut() {
+          app.keyboard(event);
+        }
+      }
+      _ => {}
     }
   }
 
   fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
-    // NOTE: The handling below is only needed due to nvidia on Wayland to not crash
-    // on exit due to nvidia driver touching the Wayland display from on
-    // `exit` hook.
-    let _gl_display = self.gl_context.take().unwrap().display();
-
-    // Clear the window.
+    let _display = self
+      .gl_context
+      .take()
+      .expect("GL context is missing")
+      .display();
     self.state = None;
   }
 
   fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-    if let Some(AppState { gl_surface, window }) = self.state.as_ref() {
-      let gl_context = self.gl_context.as_ref().unwrap();
-      let app = self.app.as_mut().unwrap();
-      let imgui_state = self.imgui_state.as_mut().unwrap();
+    let Some(state) = self.state.as_ref() else {
+      return;
+    };
 
-      imgui_state
-        .platform
-        .prepare_frame(&window, &mut imgui_state.context);
+    let window = &state.window;
+    let surface = &state.surface;
+    let gl_context = self.gl_context.as_ref().expect("GL context is missing");
+    let app = self.app.as_mut().expect("application is missing");
+    let imgui = self.imgui.as_mut().expect("ImGui state is missing");
 
-      let ui = imgui_state.context.frame();
+    imgui.platform.prepare_frame(window, &mut imgui.context);
+    let ui = imgui.context.frame();
+    app.update(ui.io().delta_time());
+    app.draw(ui);
+    imgui.platform.prepare_render_with_ui(&ui, window);
 
-      app.update(ui.io().delta_time());
-      app.draw(ui);
+    let draw_data = imgui.context.render();
+    imgui
+      .renderer
+      .new_frame()
+      .expect("failed to start renderer frame");
+    imgui
+      .renderer
+      .render(draw_data)
+      .expect("failed to render ImGui frame");
 
-      imgui_state.platform.prepare_render_with_ui(&ui, &window);
-      let draw_data = imgui_state.context.render();
-
-      imgui_state.renderer.new_frame().unwrap();
-      imgui_state.renderer.render(draw_data).unwrap();
-
-      window.request_redraw();
-
-      gl_surface.swap_buffers(gl_context).unwrap();
-    }
+    window.request_redraw();
+    surface
+      .swap_buffers(gl_context)
+      .expect("failed to swap buffers");
   }
 }
 
-fn create_gl_context(window: &Window, gl_config: &Config) -> NotCurrentContext {
-  let raw_window_handle = window.window_handle().ok().map(|wh| wh.as_raw());
+impl MainWindow {
+  fn new(
+    template: ConfigTemplateBuilder,
+    display_builder: DisplayBuilder,
+    project_path: String,
+  ) -> Self {
+    Self {
+      template,
+      project_path,
+      app: None,
+      imgui: None,
+      state: None,
+      gl_context: None,
+      display: GlDisplayCreationState::Builder(Box::new(display_builder)),
+    }
+  }
 
-  // The context creation part.
-  let context_attributes = ContextAttributesBuilder::new().build(raw_window_handle);
+  fn gl_context(&self) -> &PossiblyCurrentContext {
+    self.gl_context.as_ref().expect("GL context is missing")
+  }
 
-  // Since glutin by default tries to create OpenGL core context, which may not be
-  // present we should try gles.
-  let fallback_context_attributes = ContextAttributesBuilder::new()
+  fn initialize_app(
+    &mut self,
+    window: &Window,
+    _event_loop: &ActiveEventLoop,
+  ) -> anyhow::Result<()> {
+    use dear_imgui_rs::ConfigFlags;
+
+    let mut context = dear_imgui_rs::Context::create();
+    context
+      .io_mut()
+      .set_config_flags(ConfigFlags::DOCKING_ENABLE);
+    context.set_ini_filename(None::<String>)?;
+    context
+      .fonts()
+      .add_font(&[dear_imgui_rs::FontSource::TtfData {
+        data: include_bytes!("NotoSansJP-Regular.ttf"),
+        size_pixels: None,
+        config: None,
+      }]);
+
+    let mut platform = dear_imgui_winit::WinitPlatform::new(&mut context);
+    platform.attach_window(window, dear_imgui_winit::HiDpiMode::Default, &mut context);
+
+    let gl = unsafe {
+      glow::Context::from_loader_function_cstr(|name| {
+        self.gl_context().display().get_proc_address(name).cast()
+      })
+    };
+    let mut renderer = dear_imgui_glow::GlowRenderer::new(gl, &mut context)?;
+    renderer.set_framebuffer_srgb_enabled(false);
+    renderer.new_frame()?;
+
+    let gl = renderer
+      .gl_context()
+      .ok_or_else(|| anyhow::anyhow!("renderer has no GL context"))?
+      .clone();
+    let app = App::new(PathBuf::from(&self.project_path), gl, &context, &mut renderer)?;
+    self.app = Some(app);
+    self.imgui = Some(ImGuiState {
+      context,
+      platform,
+      renderer,
+    });
+    Ok(())
+  }
+}
+
+fn create_gl_context(window: &Window, config: &Config) -> NotCurrentContext {
+  let raw_window_handle = window.window_handle().ok().map(|handle| handle.as_raw());
+  let gl_display = config.display();
+
+  let attributes = ContextAttributesBuilder::new().build(raw_window_handle);
+  let gles_attributes = ContextAttributesBuilder::new()
     .with_context_api(ContextApi::Gles(None))
     .build(raw_window_handle);
-
-  // There are also some old devices that support neither modern OpenGL nor GLES.
-  // To support these we can try and create a 2.1 context.
-  let legacy_context_attributes = ContextAttributesBuilder::new()
+  let legacy_attributes = ContextAttributesBuilder::new()
     .with_context_api(ContextApi::OpenGl(Some(Version::new(2, 1))))
     .build(raw_window_handle);
 
-  // Reuse the uncurrented context from a suspended() call if it exists, otherwise
-  // this is the first time resumed() is called, where the context still
-  // has to be created.
-  let gl_display = gl_config.display();
-
   unsafe {
     gl_display
-      .create_context(gl_config, &context_attributes)
-      .unwrap_or_else(|_| {
-        gl_display
-          .create_context(gl_config, &fallback_context_attributes)
-          .unwrap_or_else(|_| {
-            gl_display
-              .create_context(gl_config, &legacy_context_attributes)
-              .expect("failed to create context")
-          })
-      })
+      .create_context(config, &attributes)
+      .or_else(|_| gl_display.create_context(config, &gles_attributes))
+      .or_else(|_| gl_display.create_context(config, &legacy_attributes))
+      .expect("failed to create an OpenGL context")
   }
 }
 
 enum GlDisplayCreationState {
-  /// The display was not build yet.
   Builder(Box<DisplayBuilder>),
-  /// The display was already created for the application.
   Init,
 }
 
-impl MainWindow {
-  fn new(template: ConfigTemplateBuilder, display_builder: DisplayBuilder, project_path: String) -> Self {
-    Self {
-      template,
-      gl_display: GlDisplayCreationState::Builder(Box::new(display_builder)),
-      gl_context: None,
-      state: None,
-      app: None,
-      imgui_state: None,
-      project_path,
-    }
-  }
-}
-
-struct AppState {
-  gl_surface: Surface<WindowSurface>,
-  // NOTE: Window should be dropped after all resources created using its
-  // raw-window-handle.
-  window: Window,
-}
-
-// Find the config with the maximum number of samples, so our triangle will be
-// smooth.
-pub fn gl_config_picker(configs: Box<dyn Iterator<Item = Config> + '_>) -> Config {
+fn gl_config_picker(configs: Box<dyn Iterator<Item = Config> + '_>) -> Config {
   configs
-    .reduce(|accum, config| {
-      let transparency_check = config.supports_transparency().unwrap_or(false)
-        & !accum.supports_transparency().unwrap_or(false);
-
-      if transparency_check || config.num_samples() > accum.num_samples() {
+    .reduce(|best, config| {
+      let transparency = config.supports_transparency().unwrap_or(false)
+        && !best.supports_transparency().unwrap_or(false);
+      if transparency || config.num_samples() > best.num_samples() {
         config
       } else {
-        accum
+        best
       }
     })
-    .unwrap()
+    .expect("no compatible OpenGL configuration found")
 }

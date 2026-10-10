@@ -1,5 +1,13 @@
 {
 	"Version": 3,
+    "Layout": {
+      "X": 0.0,
+      "Y": 0.0,
+      "Width": 1280.0,
+      "Height": 1100.0,
+      "CenterX": 640.0,
+      "CenterY": 550.0
+    },
 	"FileReferences": {
 		"Moc": "Mark.moc3",
 		"Textures": [

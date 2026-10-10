@@ -11,10 +11,10 @@ impl RectF {
     RectF {
       x: self.x - width,
       y: self.y - height,
-      width: self.width + width*2.0,
-      height: self.height + height*2.0,
+      width: self.width + width * 2.0,
+      height: self.height + height * 2.0,
     }
-  } 
+  }
 
   pub fn bottom(&self) -> f32 {
     self.y + self.height

@@ -20,7 +20,7 @@ pub enum Block<'a> {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Command<'a> {
-  Wait(f32),       // @wait 2.3 
+  Wait(f32),     // @wait 2.3
   Jump(&'a str), // @jump <ID>
   Set {
     // @set MyEnum.value
@@ -28,14 +28,14 @@ pub enum Command<'a> {
     value: &'a str,
   },
   PlayAnimation(&'a str, bool), // @play Anim01 once or @play Anim01
-  SetMainChoicer(&'a str), // @setmainchoicer [[MyChoicer]]
-  Next,                    // @next
+  SetMainChoicer(&'a str),      // @setmainchoicer [[MyChoicer]]
+  Next,                         // @next
 }
 
 type Extra<'a> = extra::Err<Rich<'a, char>>;
 
 /* This is the parser for a single Dialog Block */
-pub fn dialog_block_lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token<'a>>, Extra<'a>> {
+fn dialog_block_lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token<'a>>, Extra<'a>> {
   let parser_block_choicer = just("[[")
     .ignore_then(none_of(']').repeated().at_least(1).padded().to_slice())
     .then_ignore(just("]]"));
@@ -99,16 +99,20 @@ pub fn dialog_block_lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token<'a>>, Extr
 
   let setanimation = just("play")
     .then_ignore(whitespace)
-    .ignore_then(
-      text::ascii::ident()
-      .then(just("once").or_not()) 
-    )
+    .ignore_then(text::ascii::ident().then(whitespace.ignore_then(just("once")).or_not()))
     .map(|(name, once)| Command::PlayAnimation(name, once.is_none()));
 
   let next = just("next").ignored().map(|_| Command::Next);
 
   let cmd = just('@')
-    .ignore_then(choice((jump, wait, set, setanimation, setmainchoicer, next)))
+    .ignore_then(choice((
+      jump,
+      wait,
+      set,
+      setanimation,
+      setmainchoicer,
+      next,
+    )))
     .map(Token::Command);
   // ==========================
 
@@ -123,6 +127,39 @@ pub fn dialog_block_lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token<'a>>, Extr
     .or(line)
     .repeated()
     .collect()
+}
+
+pub fn parse_dialog_into_tokens(src: &str) -> anyhow::Result<Vec<Token<'_>>> {
+  dialog_block_lexer()
+    .parse(&src)
+    .into_result()
+    .map_err(|errors| {
+      let messages = errors
+        .iter()
+        .map(|error| {
+          let span = error.span();
+          let start = span.start;
+
+          let line_start = src[..start].rfind('\n').map(|i| i + 1).unwrap_or(0);
+
+          let line_number = src[..start].bytes().filter(|&b| b == b'\n').count() + 1;
+
+          let line_end = src[start..]
+            .find('\n')
+            .map(|i| start + i)
+            .unwrap_or(src.len());
+
+          format!(
+            "line {line_number}: {}\n  source: {}",
+            format!("{error:#?}"),
+            &src[line_start..line_end],
+          )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+      anyhow::anyhow!("Dialog Block Lexer\n{messages}")
+    })
 }
 
 fn parse_float<'a>() -> impl Parser<'a, &'a str, f32, Extra<'a>> {
@@ -160,6 +197,15 @@ pub enum Dialog {
   Choicer(Vec<DialogNode>),
 }
 
+impl Dialog {
+  pub fn nodes(&self) -> &[DialogNode] {
+    match self {
+      Self::Conversation(nodes) => nodes,
+      Self::Choicer(nodes) => nodes,
+    }
+  }
+}
+
 pub fn dialog_parser<'a>()
 -> impl Parser<'a, &'a [Token<'a>], Vec<(Rc<str>, Dialog)>, extra::Err<Rich<'a, Token<'a>>>> {
   let event = select! {
@@ -187,7 +233,10 @@ pub fn dialog_parser<'a>()
     Token::Speaker(speaker) => speaker
   }
   .then(event.repeated().collect())
-  .map(|(who, events)| DialogNode { label: who.into(), events });
+  .map(|(who, events)| DialogNode {
+    label: who.into(),
+    events,
+  });
 
   let conversation_block = select! {
     Token::Block(Block::Conversation(id)) => id
@@ -201,11 +250,14 @@ pub fn dialog_parser<'a>()
   let choice_item = select! {
     Token::Choice(label) => label
   }
-  // Many things here?
+  // A "Choicer" is just a DialogNode with @jump at the end
   .then(select! {
     Token::Command(Command::Jump(goto)) => goto.into(),
   })
-  .map(|(label, goto)| DialogNode { label: label.into(), events: vec![Event::Jump(goto)] });
+  .map(|(label, goto)| DialogNode {
+    label: label.into(),
+    events: vec![Event::Jump(goto)],
+  });
 
   let choicer_block = select! {
     Token::Block(Block::Choicer(id)) => id
