@@ -25,7 +25,7 @@ impl App {
     let manifest = ProjectManifest::from_path(&model_path)?;
     let assets = ProjectAssets::load(&manifest)?;
     let runtime = EditorRuntime::new(&manifest, &assets, gl)?;
-    let ui_state = UiState::new(&runtime, imgui_context, imgui_renderer);
+    let ui_state = UiState::new(&assets, &runtime, imgui_context, imgui_renderer);
 
     // let ui = EditorUI::new(&core, imgui_context, imgui_renderer);
 

@@ -1,34 +1,91 @@
-use core::dialog::{DialogManager, DialogPlayer};
+use std::rc::Rc;
 
+use crate::{
+  project::ProjectAssets,
+  runtime::EditorRuntime,
+  ui::{
+    draw_graph, draw_graph_inspector, draw_timeline,
+    graph::{UiGraphCommand, UiGraphState},
+    timeline::{UiPropertiesCommand, UiTimelineCommand, draw_properties},
+  },
+};
 use dear_imgui_rs::{Condition, DockBuilder, SplitDirection, StyleVar, TextureId, WindowFlags};
 
-use crate::{project::ProjectAssets, runtime::EditorRuntime};
+pub struct IdGen(usize);
+
+impl IdGen {
+  fn new() -> Self {
+    Self(1)
+  }
+
+  pub fn next(&mut self) -> usize {
+    let v = self.0;
+    self.0 += 1;
+    v
+  }
+}
 
 pub struct UiState {
   layout_initialized: bool,
   texture_id: TextureId,
+  unchanged_str: Rc<str>,
+  empty_str: Rc<str>,
+  noncontrol_str: Rc<str>,
+  pub current_dialog_name: Option<Rc<str>>,
+  pub current_container_index: Option<usize>,
+  pub node_editor: dear_node_editor::EditorContext,
+  pub is_dialog_playing: bool,
+  pub graph_state: UiGraphState,
+  pub id_gen: IdGen,
 }
 
 impl UiState {
   pub fn new(
+    assets: &ProjectAssets,
     runtime: &EditorRuntime,
     imgui_context: &dear_imgui_rs::Context,
     imgui_renderer: &mut dear_imgui_glow::GlowRenderer,
   ) -> Self {
-    // Adding Model Texture to TexturePool
+    // Adding Renderer Texture to TexturePool
     let texture_id = TextureId::new(1001);
     imgui_renderer
       .texture_map_mut()
-      .set(texture_id, runtime.model.texture);
+      .set(texture_id, runtime.model_renderer.texture_target_id());
+
+    let mut id_gen = IdGen::new();
+    let graph_state = UiGraphState::new(&assets.dialog_mgr, &mut id_gen);
+    let node_editor = dear_node_editor::EditorContext::create(imgui_context);
 
     Self {
       texture_id,
       layout_initialized: false,
+      is_dialog_playing: false,
+      graph_state,
+      id_gen,
+      node_editor,
+      current_dialog_name: None,
+      current_container_index: None,
+      noncontrol_str: "NonControl".into(),
+      unchanged_str: "(Unchanged)".into(),
+      empty_str: "".into(),
     }
   }
 }
 
-pub fn draw_editor(ui: &dear_imgui_rs::Ui, assets: &ProjectAssets, ui_state: &mut UiState) {
+pub enum UiCommand {
+  PlayDialog { skip: usize },
+  StopDialog,
+  Graph(UiGraphCommand),
+  Timeline(UiTimelineCommand),
+  Properties(UiPropertiesCommand),
+}
+
+#[derive(Default)]
+pub struct UiOutput {
+  pub commands: Vec<UiCommand>,
+}
+
+pub fn draw_editor(ui: &dear_imgui_rs::Ui, assets: &ProjectAssets, state: &mut UiState) {
   let viewport = ui.main_viewport();
   ui.set_next_window_viewport(viewport.id());
   let style_vars = [
@@ -57,8 +114,8 @@ pub fn draw_editor(ui: &dear_imgui_rs::Ui, assets: &ProjectAssets, ui_state: &mu
       let dockspace_id = ui.get_id("MainDockSpace");
       ui.dock_space(dockspace_id, [0.0, 0.0]);
 
-      if !ui_state.layout_initialized {
-        ui_state.layout_initialized = true;
+      if !state.layout_initialized {
+        state.layout_initialized = true;
         DockBuilder::remove_node(ui, dockspace_id);
         DockBuilder::add_node(
           ui,
@@ -85,7 +142,7 @@ pub fn draw_editor(ui: &dear_imgui_rs::Ui, assets: &ProjectAssets, ui_state: &mu
         DockBuilder::finish(ui, dockspace_id);
       }
 
-      ui.window("Graph").build(|| {
+      let output = ui.window("Graph").build(|| {
         // use crate::graph::Node;
 
         let avail = ui.content_region_avail();
@@ -93,118 +150,69 @@ pub fn draw_editor(ui: &dear_imgui_rs::Ui, assets: &ProjectAssets, ui_state: &mu
         let inspector_height = 100.0;
         let graph_height = avail[1] - inspector_height - ui.clone_style().item_spacing()[1];
 
-        ui.child_window("##graph")
+        let output = ui
+          .child_window("##graph")
           .size([avail[0], graph_height])
           .border(true)
-          .build(ui, || {
-            /*
-            let result = self.graph.build(ui, &self.node_editor, false, None);
-
-            if let Some(cmd) = result.playback_cmd {
-              use crate::ui::graph;
-              match cmd {
-                graph::PlaybackCmd::Play {
-                  dialog_mgr,
-                  dialog_player,
-                } => {
-                  playback_cmd = Some(PlaybackCmd::Play {
-                    dialog_mgr,
-                    dialog_player,
-                  });
-                }
-                graph::PlaybackCmd::Stop => {
-                  playback_cmd = Some(PlaybackCmd::Stop);
-                }
-              }
-            }*/
-          });
+          .build(ui, || draw_graph(ui, state));
 
         // Inspector
         ui.child_window("##inspector")
           .size([avail[0], inspector_height])
           .border(true)
-          .build(ui, || {
-            /*
-            ui.text("Inspector");
-            ui.separator();
+          .build(ui, || draw_graph_inspector(ui, state));
 
-            if let Some(node) = self.graph.get_mut_selected_node() {
-              let name = match node {
-                Node::Conversation { name, .. } => name,
-                Node::Choicer { name, .. } => name,
-              };
-
-              ui.text("Name:");
-              ui.same_line();
-              ui.input_text("##graph_inspector_input", name).build();
-            }*/
-          });
+        output
       });
 
-      ui.window("Timeline").build(|| {
-        /*
-        if !self
-          .graph
-          .get_selected_node_id()
-          .is_some_and(|id| self.graph.has_node_a_timeline(id))
-        {
-          ui.text("Select a Conversation Node");
-          return;
-        }
+      let output = ui.window("Timeline").build(|| {
+        let is_dialog_playing = state.is_dialog_playing;
+        let current_container_index = state.current_container_index;
 
-        let result = self.graph.get_mut_selected_timeline().unwrap().build(
-          ui,
-          self.copied_block.as_ref(),
-          self.copied_container.as_ref(),
-          None,
-          false,
-        );
-
-        if let Some(cmd) = result.playback_cmd {
-          use crate::ui::timeline;
-
-          match cmd {
-            timeline::PlaybackCmd::Play { skip } => {
-              let node = self.graph.get_selected_node().unwrap();
-              let dialog = self
-                .graph
-                .get_selected_timeline()
-                .unwrap()
-                .export_to_dialog();
-              let dialog_mgr =
-                DialogManager::from_entries(vec![(node.name().as_str().into(), dialog)]);
-              let dialog_player = {
-                let entry_point = dialog_mgr.build(node.name().as_str().into()).unwrap();
-                DialogPlayer::new(entry_point)
-              };
-
-              playback_cmd = Some(PlaybackCmd::Play {
-                dialog_mgr,
-                dialog_player,
-              });
-            }
-            timeline::PlaybackCmd::Stop => {
-              playback_cmd = Some(PlaybackCmd::Stop);
-            }
+        match state.graph_state.get_mut_selected_timeline() {
+          Some(timeline_state) => {
+            return draw_timeline(
+              ui,
+              is_dialog_playing,
+              current_container_index,
+              timeline_state,
+            );
+          }
+          None => {
+            ui.text("Select a Conversation Node");
+            return UiOutput::default();
           }
         }
-        */
       });
 
       ui.window("Properties").build(|| {
-        // self.draw_properties(ui, &ctx);
+        let Some(timeline_state) = state.graph_state.get_mut_selected_timeline() else {
+          return;
+        };
+
+        if let Some(selected) = timeline_state.get_selected() {
+          draw_properties(
+            ui,
+            selected,
+            state.unchanged_str.clone(),
+            state.empty_str.clone(),
+            state.noncontrol_str.clone(),
+            assets,
+            timeline_state,
+          );
+        }
       });
     });
 
   // Draw Model
   ui.window("Preview").build(|| {
-    /*let available = ui.content_region_avail();
+    let available = ui.content_region_avail();
 
     if available[0] <= 0.0 || available[1] <= 0.0 {
       return;
     }
 
-    let aspect_ratio = core.layout.width / core.layout.height;
+    let aspect_ratio = assets.layout.width / assets.layout.height;
 
     let draw_size = if available[0] / available[1] > aspect_ratio {
       [available[1] * aspect_ratio, available[1]]
@@ -219,54 +227,9 @@ pub fn draw_editor(ui: &dear_imgui_rs::Ui, assets: &ProjectAssets, ui_state: &mu
       cursor[1] + (available[1] - draw_size[1]) * 0.5,
     ]);
 
-    dear_imgui_rs::Image::new(ui, self.texture_id, draw_size)
+    dear_imgui_rs::Image::new(ui, state.texture_id, draw_size)
       .uv0([0.0, 1.0])
       .uv1([1.0, 0.0])
-      .build();*/
+      .build();
   });
 }
-
-/*
-pub struct EditorUI {
-  graph: Graph,
-  node_editor: dear_node_editor::EditorContext,
-  copied_block: Option<TimelineBlock>,
-  copied_container: Option<Container>,
-}
-
-pub enum PlaybackCmd {
-  Play {
-    dialog_mgr: DialogManager,
-    dialog_player: DialogPlayer,
-  },
-  Stop,
-}
-
-pub struct BuildResult {
-  pub playback_cmd: Option<PlaybackCmd>,
-}
-
-impl EditorUI {
-  pub fn new(
-    core: &EditorCore,
-  ) -> Self {
-    let graph = Graph::new(&core.dialog_mgr);
-    let node_editor = dear_node_editor::EditorContext::create(imgui_context);
-
-    Self {
-      texture_id,
-      graph,
-      node_editor,
-      copied_block: None,
-      copied_container: None,
-    }
-  }
-
-  pub fn build(&mut self, ui: &dear_imgui_rs::Ui, core: &EditorCore) -> BuildResult {
-    let mut playback_cmd = None;
-
-
-
-    BuildResult { playback_cmd }
-  }
-}*/

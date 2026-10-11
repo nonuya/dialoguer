@@ -15,7 +15,7 @@ use crate::live2d::{clipping_manager::ClippingManager, config};
 pub struct Model {
   gl: Rc<glow::Context>,
   model2d: UserModel,
-  pub texture: glow::Texture,
+  texture: glow::Texture,
   meshes: Vec<Mesh>,
   clipping_manager: ClippingManager,
   parameters: HashMap<Rc<str>, usize>,

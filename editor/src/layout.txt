@@ -471,17 +471,11 @@ impl Layout {
       use timeline::{Selection, TimelineBlockType, TimelineSetBlockType};
 
       match selected {
-        Selection::Container { container, .. } => {
-          ui.text("Who?");
-          ui.same_line();
-          ui.input_text(format!("##container_{}", container.id), &mut container.name)
-            .build();
-        }
         Selection::Block {
           block,
           container_id,
           ..
-        } => match &mut block.value {
+} => match &mut block.value {
           TimelineBlockType::Text(text) => {
             ui.text("Text:");
             ui.same_line();
