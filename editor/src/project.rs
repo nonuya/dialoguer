@@ -12,7 +12,7 @@ use anyhow::Context;
 use cubism::json::model::{Layout, Model3};
 
 pub struct ProjectManifest {
-  pub model3: Model3,        // .model3.json
+  pub model3: Model3, // .model3.json
   pub root: PathBuf,
   pub definition: PathBuf,   // .def
   pub dialog: PathBuf,       // .dialog
@@ -70,7 +70,7 @@ impl ProjectManifest {
       definition,
       dialog,
       motions,
-      root: path.to_path_buf()
+      root: path.to_path_buf(),
     })
   }
 }
@@ -86,8 +86,10 @@ pub struct ProjectAssets {
 impl ProjectAssets {
   pub fn load(manifest: &ProjectManifest) -> anyhow::Result<Self> {
     let model_def = {
-      let src = std::fs::read_to_string(&manifest.definition)
-        .context(format!("Failed to load EnumMap in {}", manifest.definition.display()))?;
+      let src = std::fs::read_to_string(&manifest.definition).context(format!(
+        "Failed to load EnumMap in {}",
+        manifest.definition.display()
+      ))?;
 
       core::dialog::serializable::ModelDefinition::from_str(&src)?
     };
@@ -102,7 +104,8 @@ impl ProjectAssets {
         .context("Failed to create DialogManager")?
     };
 
-    let layout = manifest.model3
+    let layout = manifest
+      .model3
       .layout
       .context("model3.json doesnt have Layout")?;
 
@@ -110,7 +113,8 @@ impl ProjectAssets {
     let motion_mgr = {
       use rayon::prelude::*;
 
-      let motions = manifest.motions
+      let motions = manifest
+        .motions
         .par_iter()
         .map(|p| {
           log::info!("[Live2D] Loading Motion '{}'", p.display());

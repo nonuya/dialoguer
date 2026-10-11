@@ -1,7 +1,9 @@
 use std::{path::PathBuf, rc::Rc};
 
 use crate::{
-  project::{ProjectAssets, ProjectManifest}, runtime::EditorRuntime, ui::{UiState, draw_editor},
+  project::{ProjectAssets, ProjectManifest},
+  runtime::EditorRuntime,
+  ui::{UiState, draw_editor},
 };
 use winit::event::KeyEvent;
 

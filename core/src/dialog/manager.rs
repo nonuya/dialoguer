@@ -2,13 +2,11 @@ use std::{collections::HashMap, rc::Rc};
 
 use chumsky::Parser;
 
-use crate::{
-  dialog::{Dialog, Token, dialog_parser},
-};
+use crate::dialog::{Dialog, Token, dialog_parser};
 
 pub struct DialogManager {
-  pub (in crate::dialog) pool: Vec<Dialog>,
-  pub (in crate::dialog) index_map: HashMap<Rc<str>, usize>,
+  pub(in crate::dialog) pool: Vec<Dialog>,
+  pub(in crate::dialog) index_map: HashMap<Rc<str>, usize>,
 }
 
 impl DialogManager {
@@ -84,7 +82,7 @@ impl DialogManager {
 
 #[derive(PartialEq, Clone, Copy)]
 pub struct DialogIter {
-  pub (in crate::dialog) dialog_idx: usize,   // Where is the dialog in the Dialog Pool?
-  pub (in crate::dialog) node_cursor: usize,  // Who is speaking rn?
-  pub (in crate::dialog) event_cursor: usize, // In which event am i?
+  pub(in crate::dialog) dialog_idx: usize, // Where is the dialog in the Dialog Pool?
+  pub(in crate::dialog) node_cursor: usize, // Who is speaking rn?
+  pub(in crate::dialog) event_cursor: usize, // In which event am i?
 }

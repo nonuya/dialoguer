@@ -282,7 +282,12 @@ impl MainWindow {
       .gl_context()
       .ok_or_else(|| anyhow::anyhow!("renderer has no GL context"))?
       .clone();
-    let app = App::new(PathBuf::from(&self.project_path), gl, &context, &mut renderer)?;
+    let app = App::new(
+      PathBuf::from(&self.project_path),
+      gl,
+      &context,
+      &mut renderer,
+    )?;
     self.app = Some(app);
     self.imgui = Some(ImGuiState {
       context,

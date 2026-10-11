@@ -9,7 +9,7 @@ enum State {
   Running,
   WaitingInput,
   WaitingChoice(Vec<(Rc<str>, DialogIter)>),
-  Finished
+  Finished,
 }
 
 pub struct DialogPlayer {
@@ -31,7 +31,7 @@ impl DialogPlayer {
     match &self.entry_point {
       DialogEntryPoint::Choicer(choices) => {
         self.state = State::WaitingChoice(choices.clone());
-      },
+      }
       DialogEntryPoint::Conversation(iter) => {
         self.iter = Some(iter.clone());
         self.state = State::Running;

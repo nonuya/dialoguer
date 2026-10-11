@@ -13,7 +13,11 @@ pub struct EditorRuntime {
 }
 
 impl EditorRuntime {
-  pub fn new(manifest: &ProjectManifest, assets: &ProjectAssets, gl: Rc<glow::Context>) -> anyhow::Result<Self> {
+  pub fn new(
+    manifest: &ProjectManifest,
+    assets: &ProjectAssets,
+    gl: Rc<glow::Context>,
+  ) -> anyhow::Result<Self> {
     let model = {
       let texture = load_texture_from_astc_path(&gl, &manifest.texture)?;
 
@@ -29,7 +33,8 @@ impl EditorRuntime {
     };
 
     let animator = {
-      let initial_view = assets.model_def
+      let initial_view = assets
+        .model_def
         .views
         .get("Default")
         .context("Failed to get 'Default' view")?

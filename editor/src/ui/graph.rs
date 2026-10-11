@@ -1,8 +1,13 @@
 use dear_node_editor::*;
-use std::{collections::{HashMap, HashSet, VecDeque}, rc::Rc};
+use std::{
+  collections::{HashMap, HashSet, VecDeque},
+  rc::Rc,
+};
 
 use crate::ui::{
-  UiState, editor::{IdGen, UiCommand, UiOutput}, timeline::UiTimelineState,
+  UiState,
+  editor::{IdGen, UiCommand, UiOutput},
+  timeline::UiTimelineState,
 };
 
 impl IdGen {
