@@ -150,7 +150,7 @@ pub struct ModelRenderer {
 impl ModelRenderer {
   pub fn new(gl: Rc<glow::Context>, layout: Layout) -> anyhow::Result<Self> {
     let shaders = ModelShaders::new(&gl)?;
-    let blackscreen = BlackScreenRenderer::new(gl.clone())?;
+    let blackscreen = BlackScreenRenderer::new(&gl)?;
     let ctx = RenderContext::from_gl(gl);
     let texture_target = TextureTarget::new(&ctx, layout.width, layout.height)?;
 
@@ -171,7 +171,7 @@ impl ModelRenderer {
     self.texture_target.texture
   }
 
-  pub fn draw(&self, model: &Model, matrix: glam::Mat4) {
+  pub fn draw(&self, model: &Model, alpha:f32, matrix: glam::Mat4) {
     // Drawing onto texture
     let _fbo = self.ctx.push_framebuffer(Some(self.texture_target.fbo));
 
@@ -190,6 +190,7 @@ impl ModelRenderer {
 
     self.draw_masks(model);
     self.draw_model(model, mvp);
+    self.blackscreen.draw(alpha, self.ctx.get_context());
   }
 
   fn draw_masks(&self, model: &Model) {
@@ -449,6 +450,10 @@ impl Drop for ModelRenderer {
 
       gl.delete_texture(self.texture_target.texture);
       gl.delete_framebuffer(self.texture_target.fbo);
+
+      gl.delete_buffer(self.blackscreen.vbo);
+      gl.delete_program(self.blackscreen.shader.program);
+      gl.delete_vertex_array(self.blackscreen.vao);
     }
   }
 }

@@ -85,7 +85,13 @@ pub struct UiOutput {
   pub commands: Vec<UiCommand>,
 }
 
-pub fn draw_editor(ui: &dear_imgui_rs::Ui, assets: &ProjectAssets, state: &mut UiState) {
+pub fn draw_editor(
+  ui: &dear_imgui_rs::Ui,
+  assets: &ProjectAssets,
+  state: &mut UiState,
+) -> UiOutput {
+  let mut output = UiOutput::default();
+
   let viewport = ui.main_viewport();
   ui.set_next_window_viewport(viewport.id());
   let style_vars = [
@@ -142,7 +148,7 @@ pub fn draw_editor(ui: &dear_imgui_rs::Ui, assets: &ProjectAssets, state: &mut U
         DockBuilder::finish(ui, dockspace_id);
       }
 
-      let output = ui.window("Graph").build(|| {
+      ui.window("Graph").build(|| {
         // use crate::graph::Node;
 
         let avail = ui.content_region_avail();
@@ -150,37 +156,44 @@ pub fn draw_editor(ui: &dear_imgui_rs::Ui, assets: &ProjectAssets, state: &mut U
         let inspector_height = 100.0;
         let graph_height = avail[1] - inspector_height - ui.clone_style().item_spacing()[1];
 
-        let output = ui
-          .child_window("##graph")
+        ui.child_window("##graph")
           .size([avail[0], graph_height])
           .border(true)
-          .build(ui, || draw_graph(ui, state));
+          .build(ui, || {
+            let o = draw_graph(ui, state);
+
+            output.commands.extend(o.commands);
+          });
 
         // Inspector
         ui.child_window("##inspector")
           .size([avail[0], inspector_height])
           .border(true)
           .build(ui, || draw_graph_inspector(ui, state));
-
-        output
       });
 
-      let output = ui.window("Timeline").build(|| {
+      ui.window("Timeline").build(|| {
         let is_dialog_playing = state.is_dialog_playing;
-        let current_container_index = state.current_container_index;
+        let current_container_index = state
+          .current_dialog_name
+          .as_ref()
+          .and_then(|name| state.graph_state.get_node_by_name(name))
+          .filter(|node| state.graph_state.get_selected_node_id() == Some(node.id()))
+          .and(state.current_container_index);
 
         match state.graph_state.get_mut_selected_timeline() {
           Some(timeline_state) => {
-            return draw_timeline(
+            let o = draw_timeline(
               ui,
               is_dialog_playing,
               current_container_index,
               timeline_state,
             );
+
+            output.commands.extend(o.commands);
           }
           None => {
             ui.text("Select a Conversation Node");
-            return UiOutput::default();
           }
         }
       });
@@ -232,4 +245,6 @@ pub fn draw_editor(ui: &dear_imgui_rs::Ui, assets: &ProjectAssets, state: &mut U
       .uv1([1.0, 0.0])
       .build();
   });
+
+  output
 }

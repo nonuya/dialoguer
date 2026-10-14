@@ -1,3 +1,4 @@
+use anyhow::Context;
 use dear_node_editor::*;
 use std::{
   collections::{HashMap, HashSet, VecDeque},
@@ -25,7 +26,7 @@ impl IdGen {
 }
 
 #[derive(Debug, Clone)]
-enum Node {
+pub enum Node {
   Conversation {
     id: NodeId,
     name: String,
@@ -44,21 +45,21 @@ enum Node {
 }
 
 impl Node {
-  fn id(&self) -> NodeId {
+  pub fn id(&self) -> NodeId {
     match self {
       Node::Conversation { id, .. } => *id,
       Node::Choicer { id, .. } => *id,
     }
   }
 
-  fn name(&self) -> &String {
+  pub fn name(&self) -> &String {
     match self {
       Node::Conversation { name, .. } => name,
       Node::Choicer { name, .. } => name,
     }
   }
 
-  fn set_position(&mut self, pos: [f32; 2]) {
+  pub fn set_position(&mut self, pos: [f32; 2]) {
     match self {
       Node::Conversation { position, .. } => *position = pos,
       Node::Choicer { position, .. } => *position = pos,
@@ -425,12 +426,20 @@ impl UiGraphState {
     ]
   }
 
-  fn get_selected_node(&self) -> Option<&Node> {
+  pub fn get_selected_node(&self) -> Option<&Node> {
     self.selected_node_id.and_then(|id| self.get_node_by_id(id))
+  }
+
+  pub fn get_selected_node_id(&self) -> Option<NodeId> {
+    self.selected_node_id
   }
 
   fn get_node_by_id(&self, id: NodeId) -> Option<&Node> {
     self.nodes.iter().find(|n| n.id() == id)
+  }
+
+  pub fn get_node_by_name(&self, name: &Rc<str>) -> Option<&Node> {
+    self.nodes.iter().find(|n| n.name() == name.as_ref())
   }
 
   fn get_mut_selected_node(&mut self) -> Option<&mut Node> {
@@ -448,6 +457,116 @@ impl UiGraphState {
       .selected_node_id
       .and_then(|id| self.timeline_states.get_mut(&id))
   }
+
+  pub fn export_to_dialog(
+    &self,
+    id: NodeId,
+  ) -> anyhow::Result<Vec<(Rc<str>, core::dialog::Dialog)>> {
+    use core::dialog::{Dialog, DialogNode, Event};
+    use std::collections::{HashSet, VecDeque};
+
+    let mut visited = HashSet::new();
+    let mut queue = VecDeque::new();
+    let node = self
+      .get_node_by_id(id)
+      .context("Failed to get Node by Id")?;
+    let mut dialogs: Vec<(Rc<str>, Dialog)> = Vec::new();
+    queue.push_back(node);
+
+    while let Some(node) = queue.pop_front() {
+      if visited.contains(&node.id()) {
+        continue;
+      }
+      visited.insert(node.id());
+
+      match node {
+        Node::Conversation {
+          id, name, output, ..
+        } => {
+          let timeline = self.timeline_states.get(id).context("Failed to get Timeline")?;
+          let mut dialog = timeline.export_to_dialog();
+
+          // Si tiene un nodo de salida
+          if let Some(next) = self.follow(*output) {
+            queue.push_back(next);
+            match &mut dialog {
+              Dialog::Conversation(nodes) => {
+                nodes.push(DialogNode {
+                  label: "Player".into(),
+                  events: vec![Event::Jump(next.name().as_str().into())],
+                });
+              }
+              Dialog::Choicer(_) => {
+                unreachable!();
+              }
+            }
+          }
+
+          // Si tiene un flow nodo de salida
+          if let Some(next) = self.flow_follow(*output) {
+            match &mut dialog {
+              Dialog::Conversation(nodes) => {
+                nodes
+                  .get_mut(0)
+                  .context("Empty node")?
+                  .events
+                  .insert(0, Event::SetMainChoicer(next.name().as_str().into()));
+              }
+              Dialog::Choicer(_) => {
+                unreachable!();
+              }
+            }
+          }
+
+          dialogs.push((name.as_str().into(), dialog));
+        }
+        Node::Choicer {
+          name,
+          options,
+          outputs,
+          ..
+        } => {
+          let mut valid_choices: Vec<DialogNode> = Vec::new();
+          for (option, output) in options.iter().zip(outputs) {
+            match self.follow(*output) {
+              Some(next) => {
+                valid_choices.push(DialogNode {
+                  label: Rc::from(option.as_str()),
+                  events: vec![Event::Jump(Rc::from(next.name().as_str()))],
+                });
+                queue.push_back(next);
+              }
+              None => {
+                log::warn!("[Export] Skipping '{}' because it doesnt have an output node.", name);
+              }
+            }
+          }
+          dialogs.push((name.as_str().into(), Dialog::Choicer(valid_choices)));
+        }
+      }
+    }
+
+    Ok(dialogs)
+  }
+
+  fn follow(&self, output: PinId) -> Option<&Node> {
+    let to = self.links.iter().find(|link| link.from == output)?.to;
+
+    self.nodes.iter().find(|node| match node {
+      Node::Conversation { input, .. } => *input == to,
+      Node::Choicer { input, .. } => *input == to,
+    })
+  }
+
+  fn flow_follow(&self, output: PinId) -> Option<&Node> {
+    let to = self.flow_links.iter().find(|link| link.from == output)?.to;
+
+    self.nodes.iter().find(|node| match node {
+      Node::Conversation { input, .. } => *input == to,
+      Node::Choicer { input, .. } => *input == to,
+    })
+  }
+
 }
 
 pub enum UiGraphCommand {
@@ -472,6 +591,7 @@ pub fn draw_graph(ui: &dear_imgui_rs::Ui, state: &mut UiState) -> UiOutput {
   if let Some(node) = state.graph_state.get_selected_node() {
     if ui.button("Play") {
       output.commands.push(UiCommand::PlayDialog { skip: 0 });
+
       /*
       match self.export_to_dialog(node.id()) {
         Ok(dialogs) => {

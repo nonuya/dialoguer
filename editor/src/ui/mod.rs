@@ -4,6 +4,7 @@ mod graph;
 mod timeline;
 
 pub use editor::UiState;
+pub use editor::UiCommand;
 pub use editor::draw_editor;
 pub use graph::draw_graph;
 pub use graph::draw_graph_inspector;

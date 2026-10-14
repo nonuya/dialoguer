@@ -139,9 +139,9 @@ impl ParameterState {
       .is_some_and(|v| v.as_ref() == value_name.as_ref())
   }
 
-  pub fn remove_enum(&mut self, name: &Rc<str>, enummap: &serializable::ModelDefinition) {
+  pub fn remove_enum(&mut self, name: &str, model_def: &serializable::ModelDefinition) {
     if let Some(value_name) = self.activeenum_map.remove(name)
-      && let Some(params) = enummap.enums.get(name).unwrap().values.get(&value_name)
+      && let Some(params) = model_def.enums.get(name).unwrap().values.get(&value_name)
     {
       for p in params.iter() {
         self.parameters_map.remove(&p.name);
@@ -225,7 +225,7 @@ impl Animator {
     self.motion = Some(motion);
   }
 
-  pub fn deferred_set_parameter(&mut self, change: ParameterChange) {
+  pub fn deferred_set_parameter_change(&mut self, change: ParameterChange) {
     self.pending_set_parameter.push_back(change);
   }
 
@@ -361,14 +361,14 @@ impl Animator {
   }
 }
 
-pub struct MotionManager(pub HashMap<Rc<str>, Rc<Motion>>);
+pub struct MotionManager(pub HashMap<Rc<str>, Motion>);
 
 impl MotionManager {
   pub fn names(&self) -> Vec<&Rc<str>> {
     self.0.keys().collect()
   }
 
-  pub fn get(&self, name: &str) -> Option<&Rc<Motion>> {
+  pub fn get(&self, name: &str) -> Option<&Motion> {
     self.0.get(name)
   }
 }

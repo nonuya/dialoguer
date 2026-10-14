@@ -9,7 +9,7 @@ pub struct EditorRuntime {
   pub model: core::live2d::Model,
   pub model_renderer: core::renderer::ModelRenderer,
   pub animator: core::live2d::animator::Animator,
-  // dialog_player: Option<core::dialog::DialogPlayer>,
+  pub dialog_player: Option<core::dialog::DialogPlayer>,
 }
 
 impl EditorRuntime {
@@ -47,7 +47,15 @@ impl EditorRuntime {
       model,
       model_renderer,
       animator,
-      // dialog_player
+      dialog_player: None,
     })
+  }
+
+  pub fn draw_model(&self) {
+    self.model_renderer.draw(
+      &self.model,
+      self.animator.blackscreen_alpha(),
+      self.animator.get_matrix(),
+    );
   }
 }

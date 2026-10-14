@@ -132,7 +132,7 @@ impl ProjectAssets {
 
       let motions = motions
         .into_iter()
-        .map(|(name, motion)| (name.into(), Rc::new(motion)))
+        .map(|(name, motion)| (name.into(), motion))
         .collect();
 
       core::live2d::animator::MotionManager(motions)

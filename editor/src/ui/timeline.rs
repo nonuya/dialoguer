@@ -1,12 +1,9 @@
 use crate::{
   project::ProjectAssets,
-  ui::{
-    UiState,
-    editor::{UiCommand, UiOutput},
-  },
+  ui::editor::{UiCommand, UiOutput},
 };
 use dear_imgui_rs::{DrawListMut, Font, MouseButton, WindowFlags};
-use std::{ops::Deref, rc::Rc};
+use std::rc::Rc;
 use undoredo::UndoRedo;
 
 const BLOCK_WIDTH: f32 = 50.0;
@@ -138,6 +135,48 @@ pub struct Container {
   id: usize,
   name: String,
   blocks: Vec<TimelineBlock>,
+}
+
+impl Container {
+  pub fn export_to_dialog_node(&self) -> core::dialog::DialogNode {
+    use core::dialog::Event;
+
+    let mut events = Vec::new();
+
+    for b in &self.blocks {
+      match &b.value {
+        TimelineBlockType::Wait(seconds) => events.push(Event::Wait(*seconds)),
+        TimelineBlockType::Text(text) => events.push(Event::Text(text.as_str().into())),
+        TimelineBlockType::Set(TimelineSetBlockType {
+          parameters,
+          anim,
+          view,
+        }) => {
+          if !view.is_empty() {
+            events.push(Event::SetView(view.clone()));
+          }
+
+          if !anim.0.is_empty() {
+            events.push(Event::PlayAnimation(anim.0.clone(), anim.1));
+          }
+
+          for p in parameters {
+            if p.1.as_ref() == "NonControl" {
+              events.push(Event::RemoveEnum(p.0.clone()));
+            } else {
+              events.push(Event::SetParameter(p.0.clone(), p.1.clone()));
+            }
+          }
+        }
+        TimelineBlockType::Next => events.push(Event::Next),
+      }
+    }
+
+    core::dialog::DialogNode {
+      label: self.name.as_str().into(),
+      events,
+    }
+  }
 }
 
 #[derive(Clone)]
@@ -398,6 +437,16 @@ impl UiTimelineState {
     if let Some(command) = self.set_history.redo_command() {
       self.apply_set_command(&command, false);
     }
+  }
+
+  pub fn export_to_dialog(&self) -> core::dialog::Dialog {
+    let dialogs = self
+      .containers
+      .iter()
+      .map(Container::export_to_dialog_node)
+      .collect();
+
+    core::dialog::Dialog::Conversation(dialogs)
   }
 }
 

@@ -44,8 +44,14 @@ impl DialogManager {
   }
 }
 
+#[derive(Clone, Debug)]
+pub struct ChoiceIter {
+  pub label: Rc<str>,
+  pub iter: DialogIter,
+}
+
 pub enum DialogEntryPoint {
-  Choicer(Vec<(Rc<str>, DialogIter)>),
+  Choicer(Vec<ChoiceIter>),
   Conversation(DialogIter),
 }
 
@@ -64,15 +70,13 @@ impl DialogManager {
         nodes
           .iter()
           .enumerate()
-          .map(|(i, n)| {
-            (
-              n.label.clone(),
-              DialogIter {
-                dialog_idx: *idx,
-                node_cursor: i,
-                event_cursor: 0,
-              },
-            )
+          .map(|(i, n)| ChoiceIter {
+            label: n.label.clone(),
+            iter: DialogIter {
+              dialog_idx: *idx,
+              node_cursor: i,
+              event_cursor: 0,
+            },
           })
           .collect(),
       )),
@@ -80,7 +84,7 @@ impl DialogManager {
   }
 }
 
-#[derive(PartialEq, Clone, Copy)]
+#[derive(PartialEq, Clone, Copy, Debug)]
 pub struct DialogIter {
   pub(in crate::dialog) dialog_idx: usize, // Where is the dialog in the Dialog Pool?
   pub(in crate::dialog) node_cursor: usize, // Who is speaking rn?
