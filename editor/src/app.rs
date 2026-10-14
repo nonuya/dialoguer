@@ -1,4 +1,4 @@
-use core::dialog::{DialogManager, DialogPlayer, PlayerCommand, PlayerEffect, PlayerHandleOutput};
+use core::dialog::{DialogManager, DialogPlayer, PlayerCommand, PlayerEffect};
 use std::{path::PathBuf, rc::Rc};
 
 use crate::{
@@ -148,7 +148,7 @@ impl App {
                     self.runtime.dialog_player =
                       Some(DialogPlayer::new(name.as_str().into(), entry_point));
 
-                    self.handle_dialog_command(PlayerCommand::Start);
+                    self.handle_dialog_command(PlayerCommand::Start(skip));
                   }
                   None => {
                     log::warn!("[Export] Entry point Node {name} doesnt exists")
@@ -167,11 +167,8 @@ impl App {
       }
     }
 
-    self.runtime.draw_model();
-    // self.core.draw_model();
+    // self.runtime.draw_model();
   }
-
-  fn handle_dialog(&mut self) {}
 
   pub fn resize(&mut self, width: u32, height: u32) {}
 
@@ -190,25 +187,5 @@ impl App {
         _ => {}
       }
     }
-    /*
-    if let Some(dialog_player) = &mut self.dialog_player {
-      if !event.state.is_pressed() {
-        match event.physical_key {
-          PhysicalKey::Code(KeyCode::KeyI) => {
-            dialog_player.play();
-          }
-          PhysicalKey::Code(KeyCode::Space) => {
-            dialog_player.next();
-          }
-          PhysicalKey::Code(KeyCode::Digit1) => dialog_player.handle_input(0),
-          PhysicalKey::Code(KeyCode::Digit2) => dialog_player.handle_input(1),
-          PhysicalKey::Code(KeyCode::Digit3) => dialog_player.handle_input(2),
-          PhysicalKey::Code(KeyCode::Digit4) => dialog_player.handle_input(3),
-          PhysicalKey::Code(KeyCode::Digit5) => dialog_player.handle_input(4),
-          PhysicalKey::Code(KeyCode::Digit6) => dialog_player.handle_input(5),
-          _ => {}
-        }
-      }
-    }*/
   }
 }

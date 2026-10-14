@@ -218,6 +218,7 @@ pub fn draw_editor(
     });
 
   // Draw Model
+  /*
   ui.window("Preview").build(|| {
     let available = ui.content_region_avail();
 
@@ -244,7 +245,7 @@ pub fn draw_editor(
       .uv0([0.0, 1.0])
       .uv1([1.0, 0.0])
       .build();
-  });
+  });*/
 
   output
 }

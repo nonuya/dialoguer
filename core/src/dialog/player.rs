@@ -30,6 +30,7 @@ struct ConsumeOutput {
   effects: Vec<PlayerEffect>,
 }
 
+#[derive(Debug)]
 enum ConsumeResult {
   Next,
   Jump(Rc<str>),
@@ -165,30 +166,6 @@ fn consume_iter(
           result: ConsumeResult::Next,
           effects,
         };
-        /*
-        let output = consume_iter(
-          DialogIter {
-            node_cursor: iter.node_cursor + 1,
-            event_cursor: 0,
-            ..iter
-          },
-          model_definition,
-          dialog_mgr,
-          motion_mgr,
-          animator,
-        );
-
-        effects.extend(output.effects);
-
-        create_change_effect(&parameters, is_deferred)
-          .and_then(|changes| Some(effects.push(changes)));
-
-        return ConsumeOutput {
-          next_iter: output.next_iter,
-          result: output.result,
-          effects,
-        };
-        */
       }
       Event::SetView(name) => match model_definition.views.get(name) {
         Some(view) => effects.push(PlayerEffect::SetView(view.clone())),
@@ -243,7 +220,7 @@ pub enum PlayerState {
 }
 
 pub enum PlayerCommand {
-  Start,
+  Start(usize),
   // Stop,
   Tick(f32),
   Continue,
@@ -286,7 +263,7 @@ impl DialogPlayer {
     animator: &Animator,
   ) -> PlayerHandleOutput {
     match cmd {
-      PlayerCommand::Start => match &self.entry_point {
+      PlayerCommand::Start(skip) => match &self.entry_point {
         DialogEntryPoint::Choicer(choices) => {
           self.state = PlayerState::WaitingChoice(choices.clone());
           return PlayerHandleOutput {
@@ -297,9 +274,14 @@ impl DialogPlayer {
             ),
           };
         }
-        DialogEntryPoint::Conversation(iter) => {
-          self.consume(*iter, model_definition, dialog_mgr, motion_mgr, animator)
-        }
+        DialogEntryPoint::Conversation(iter) => self.consume(
+          *iter,
+          skip,
+          model_definition,
+          dialog_mgr,
+          motion_mgr,
+          animator,
+        ),
       },
       PlayerCommand::Chose(index) => {
         let PlayerState::WaitingChoice(ref choices) = self.state else {
@@ -310,14 +292,21 @@ impl DialogPlayer {
           return PlayerHandleOutput::empty();
         };
 
-        self.consume(choice.iter, model_definition, dialog_mgr, motion_mgr, animator)
+        self.consume(
+          choice.iter,
+          0,
+          model_definition,
+          dialog_mgr,
+          motion_mgr,
+          animator,
+        )
       }
       PlayerCommand::Continue => {
         let (PlayerState::WaitingInput(iter) | PlayerState::Next(iter)) = self.state else {
           return PlayerHandleOutput::empty();
         };
 
-        self.consume(iter, model_definition, dialog_mgr, motion_mgr, animator)
+        self.consume(iter, 0, model_definition, dialog_mgr, motion_mgr, animator)
       }
       PlayerCommand::Tick(deltatime) => {
         if !matches!(self.state, PlayerState::WaitingTime { .. }) {
@@ -340,7 +329,7 @@ impl DialogPlayer {
         }
 
         self.state = PlayerState::Idle;
-        self.consume(iter, model_definition, dialog_mgr, motion_mgr, animator)
+        self.consume(iter, 0, model_definition, dialog_mgr, motion_mgr, animator)
       } // PlayerCommand::Stop => {}
         // PlayerCommand::Chose(index) => {}
     }
@@ -348,13 +337,37 @@ impl DialogPlayer {
 
   fn consume(
     &mut self,
-    iter: DialogIter,
+    mut iter: DialogIter,
+    skip: usize,
     model_definition: &serializable::ModelDefinition,
     dialog_mgr: &DialogManager,
     motion_mgr: &MotionManager,
     animator: &Animator,
   ) -> PlayerHandleOutput {
-    let output = consume_iter(iter, model_definition, dialog_mgr, motion_mgr, animator);
+    let output = {
+      let mut effects = Vec::new();
+
+      loop {
+        let mut output = consume_iter(iter, model_definition, dialog_mgr, motion_mgr, animator);
+
+        effects.append(&mut output.effects);
+
+        match output.result {
+          ConsumeResult::Jump(..) | ConsumeResult::Finished => {
+            output.effects = effects;
+            break output;
+          }
+          _ if output.next_iter.node_cursor <= skip => {
+            iter = output.next_iter; 
+          }
+          _ => {
+            output.effects = effects;
+            break output;
+          }
+        }
+      }
+    };
+
     match output.result {
       ConsumeResult::Next => {
         self.state = PlayerState::Next(output.next_iter);
@@ -420,25 +433,5 @@ impl DialogPlayer {
         };
       }
     }
-  }
-
-  pub fn play(&mut self) {
-    /*match &self.entry_point {
-      DialogEntryPoint::Choicer(choices) => {
-        self.state = State::WaitingChoice(choices.clone());
-      }
-      DialogEntryPoint::Conversation(iter) => {
-        self.iter = Some(iter.clone());
-        self.state = State::Running;
-      }
-    }*/
-  }
-
-  pub fn update(
-    &mut self,
-    model_definition: &serializable::ModelDefinition,
-    dialog_mgr: &DialogManager,
-    motion_mgr: &MotionManager,
-  ) {
   }
 }
