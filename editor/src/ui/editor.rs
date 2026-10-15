@@ -6,6 +6,7 @@ use crate::{
   ui::{
     draw_graph, draw_graph_inspector, draw_timeline,
     graph::{UiGraphCommand, UiGraphState, handle_ui_graph_command},
+    handle_ui_timeline_command,
     timeline::{UiPropertiesCommand, UiTimelineCommand, draw_properties},
   },
 };
@@ -219,6 +220,7 @@ pub fn draw_editor(
     });
 
   // Draw Model
+  /*
   ui.window("Preview").build(|| {
     let available = ui.content_region_avail();
 
@@ -246,6 +248,7 @@ pub fn draw_editor(
       .uv1([1.0, 0.0])
       .build();
   });
+  */
 
   output
 }
@@ -254,6 +257,9 @@ pub fn handle_ui_command(cmd: UiCommand, state: &mut UiState) {
   match cmd {
     UiCommand::Graph(graph_cmd) => {
       handle_ui_graph_command(graph_cmd, state);
+    }
+    UiCommand::Timeline(timeline_cmd) => {
+      handle_ui_timeline_command(timeline_cmd, state);
     }
     _ => {
       unimplemented!("Implement this plz")

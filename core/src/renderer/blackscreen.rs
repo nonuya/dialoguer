@@ -72,11 +72,7 @@ impl BlackScreenRenderer {
       (vao, vbo)
     };
 
-    Ok(Self {
-      vao,
-      vbo,
-      shader,
-    })
+    Ok(Self { vao, vbo, shader })
   }
 
   pub fn draw(&self, alpha: f32, gl: &glow::Context) {
@@ -86,8 +82,7 @@ impl BlackScreenRenderer {
 
     unsafe {
       gl.enable(glow::BLEND);
-      gl
-        .blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
+      gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
 
       gl.disable(glow::DEPTH_TEST);
 

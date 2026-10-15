@@ -1,6 +1,9 @@
 use crate::{
   project::ProjectAssets,
-  ui::editor::{UiCommand, UiOutput},
+  ui::{
+    UiState,
+    editor::{UiCommand, UiOutput},
+  },
 };
 use dear_imgui_rs::{DrawListMut, FocusedFlags, Font, MouseButton, WindowFlags};
 use std::rc::Rc;
@@ -448,6 +451,15 @@ pub enum UiTimelineCommand {
     container_id: usize,
   },
   AddContainer(TimelineBlockType),
+  MoveBlock {
+    container_id: usize,
+    block_id: usize,
+    target_index: usize,
+  },
+  MoveContainer {
+    container_id: usize,
+    target_index: usize,
+  },
 }
 
 pub fn draw_timeline(
@@ -468,17 +480,6 @@ pub fn draw_timeline(
   } else {
     if ui.button("Play Conversation") {
       output.commands.push(UiCommand::PlayDialog { skip: 0 });
-
-      // let node = self.graph.get_selected_node().unwrap();
-      // let timeline = self.graph.get_selected_timeline().unwrap();
-      // let dialog = timeline.export_to_dialog();
-      // Self::play(
-      //   ctx,
-      //   Some((
-      //     node.name().as_str().into(),
-      //     vec![(node.name().as_str().into(), dialog)],
-      //   )),
-      // );
     }
   }
 
@@ -805,14 +806,21 @@ pub fn draw_timeline(
       if mouse_released {
         if let Some(drag) = state.drag.take() {
           let track_x = lefts[drag.container_idx] + CONTAINER_PADDING;
-          let container = &mut state.containers[drag.container_idx];
+          let container = &state.containers[drag.container_idx];
           let relative_x = drag.current_x - track_x;
 
           let mut target_index = (relative_x / BLOCK_WIDTH).round() as isize;
           target_index = target_index.clamp(0, container.blocks.len() as isize - 1);
 
-          let moved_block = container.blocks.remove(drag.block_idx);
-          container.blocks.insert(target_index as usize, moved_block);
+          if target_index as usize != drag.block_idx {
+            output
+              .commands
+              .push(UiCommand::Timeline(UiTimelineCommand::MoveBlock {
+                container_id: container.id,
+                block_id: container.blocks[drag.block_idx].id,
+                target_index: target_index as usize,
+              }));
+          }
         }
       }
 
@@ -837,8 +845,14 @@ pub fn draw_timeline(
             }
           }
 
-          let moved_container = state.containers.remove(drag.container_idx);
-          state.containers.insert(target_index, moved_container);
+          if target_index != drag.container_idx {
+            output
+              .commands
+              .push(UiCommand::Timeline(UiTimelineCommand::MoveContainer {
+                container_id: state.containers[drag.container_idx].id,
+                target_index,
+              }));
+          }
         }
       }
     });
@@ -1127,4 +1141,115 @@ fn combo_box(
   }
 
   changed
+}
+
+pub fn handle_ui_timeline_command(cmd: UiTimelineCommand, state: &mut UiState) {
+  let Some(timeline_state) = state.graph_state.get_mut_selected_timeline() else {
+    return;
+  };
+
+  match cmd {
+    UiTimelineCommand::RemoveBlock {
+      container_id,
+      block_id,
+    } => {
+      if let Some(container) = timeline_state
+        .containers
+        .iter_mut()
+        .find(|container| container.id == container_id)
+      {
+        container.blocks.retain(|block| block.id != block_id);
+      }
+
+      if timeline_state.selected_block == Some((container_id, block_id)) {
+        timeline_state.selected_block = None;
+      }
+    }
+
+    UiTimelineCommand::RemoveContainer { container_id } => {
+      timeline_state
+        .containers
+        .retain(|container| container.id != container_id);
+
+      if timeline_state.selected_container_id == Some(container_id) {
+        timeline_state.selected_container_id = None;
+      }
+
+      if timeline_state
+        .selected_block
+        .is_some_and(|(id, _)| id == container_id)
+      {
+        timeline_state.selected_block = None;
+      }
+    }
+
+    UiTimelineCommand::AddContainer(block_type) => {
+      let container_id = timeline_state
+        .containers
+        .iter()
+        .map(|container| container.id)
+        .max()
+        .map_or(0, |id| id + 1);
+
+      timeline_state.containers.push(Container {
+        id: container_id,
+        name: format!("Container {container_id}"),
+        blocks: vec![TimelineBlock {
+          id: 0,
+          value: block_type,
+        }],
+      });
+    }
+
+    UiTimelineCommand::MoveBlock {
+      container_id,
+      block_id,
+      target_index,
+    } => {
+      let Some(container) = timeline_state
+        .containers
+        .iter_mut()
+        .find(|container| container.id == container_id)
+      else {
+        return;
+      };
+
+      let Some(current_index) = container
+        .blocks
+        .iter()
+        .position(|block| block.id == block_id)
+      else {
+        return;
+      };
+
+      if container.blocks.is_empty() || current_index == target_index {
+        return;
+      }
+
+      let target_index = target_index.min(container.blocks.len() - 1);
+      let block = container.blocks.remove(current_index);
+      container.blocks.insert(target_index, block);
+    }
+
+    UiTimelineCommand::MoveContainer {
+      container_id,
+      target_index,
+    } => {
+      let Some(current_index) = timeline_state
+        .containers
+        .iter()
+        .position(|container| container.id == container_id)
+      else {
+        return;
+      };
+
+      if timeline_state.containers.is_empty() || current_index == target_index {
+        return;
+      }
+
+      let target_index = target_index.min(timeline_state.containers.len() - 1);
+      let container = timeline_state.containers.remove(current_index);
+      timeline_state.containers.insert(target_index, container);
+    }
+  }
 }

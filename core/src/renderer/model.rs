@@ -171,7 +171,7 @@ impl ModelRenderer {
     self.texture_target.texture
   }
 
-  pub fn draw(&self, model: &Model, alpha:f32, matrix: glam::Mat4) {
+  pub fn draw(&self, model: &Model, alpha: f32, matrix: glam::Mat4) {
     // Drawing onto texture
     let _fbo = self.ctx.push_framebuffer(Some(self.texture_target.fbo));
 
