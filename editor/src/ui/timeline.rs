@@ -7,7 +7,6 @@ use crate::{
 };
 use dear_imgui_rs::{DrawListMut, FocusedFlags, Font, MouseButton, WindowFlags};
 use std::rc::Rc;
-use undoredo::UndoRedo;
 
 const BLOCK_WIDTH: f32 = 50.0;
 const BLOCK_HEIGHT: f32 = 40.0;
@@ -84,47 +83,6 @@ impl TimelineSetBlockType {
   fn is_empty(&self) -> bool {
     self.parameters.is_empty() && self.view.is_empty() && self.anim.0.is_empty()
   }
-}
-
-#[derive(Clone)]
-enum SetCommand {
-  ChangeAnimation {
-    container_id: usize,
-    block_id: usize,
-    before: Rc<str>,
-    after: Rc<str>,
-  },
-  ChangeLoop {
-    container_id: usize,
-    block_id: usize,
-    before: bool,
-    after: bool,
-  },
-  ChangeView {
-    container_id: usize,
-    block_id: usize,
-    before: Rc<str>,
-    after: Rc<str>,
-  },
-  ChangeParameter {
-    container_id: usize,
-    block_id: usize,
-    parameter_index: usize,
-    before: Rc<str>,
-    after: Rc<str>,
-  },
-  AddParameter {
-    container_id: usize,
-    block_id: usize,
-    index: usize,
-    value: (Rc<str>, Rc<str>),
-  },
-  RemoveParameter {
-    container_id: usize,
-    block_id: usize,
-    index: usize,
-    value: (Rc<str>, Rc<str>),
-  },
 }
 
 #[derive(Clone)]
@@ -217,7 +175,6 @@ pub struct UiTimelineState {
   selected_container_id: Option<usize>,
   // (container_id, block_id) — estable aunque se reordenen los Vec
   selected_block: Option<(usize, usize)>,
-  set_history: UndoRedo<(), SetCommand>,
 }
 
 impl UiTimelineState {
@@ -292,7 +249,6 @@ impl UiTimelineState {
       container_drag: None,
       selected_container_id: None,
       selected_block: None,
-      set_history: UndoRedo::new(),
     }
   }
 
@@ -318,116 +274,6 @@ impl UiTimelineState {
       });
     } else {
       return None;
-    }
-  }
-
-  fn find_set_mut(
-    &mut self,
-    container_id: usize,
-    block_id: usize,
-  ) -> Option<&mut TimelineSetBlockType> {
-    let container = self.containers.iter_mut().find(|c| c.id == container_id)?;
-    let block = container.blocks.iter_mut().find(|b| b.id == block_id)?;
-
-    match &mut block.value {
-      TimelineBlockType::Set(set) => Some(set),
-      _ => None,
-    }
-  }
-
-  fn apply_set_command(&mut self, command: &SetCommand, undo: bool) {
-    match command {
-      SetCommand::ChangeAnimation {
-        container_id,
-        block_id,
-        before,
-        after,
-      } => {
-        if let Some(set) = self.find_set_mut(*container_id, *block_id) {
-          set.anim.0 = if undo { before.clone() } else { after.clone() };
-        }
-      }
-      SetCommand::ChangeLoop {
-        container_id,
-        block_id,
-        before,
-        after,
-      } => {
-        if let Some(set) = self.find_set_mut(*container_id, *block_id) {
-          set.anim.1 = if undo { *before } else { *after };
-        }
-      }
-      SetCommand::ChangeView {
-        container_id,
-        block_id,
-        before,
-        after,
-      } => {
-        if let Some(set) = self.find_set_mut(*container_id, *block_id) {
-          set.view = if undo { before.clone() } else { after.clone() };
-        }
-      }
-      SetCommand::ChangeParameter {
-        container_id,
-        block_id,
-        parameter_index,
-        before,
-        after,
-      } => {
-        if let Some(set) = self.find_set_mut(*container_id, *block_id)
-          && let Some((_, value)) = set.parameters.get_mut(*parameter_index)
-        {
-          *value = if undo { before.clone() } else { after.clone() };
-        }
-      }
-      SetCommand::AddParameter {
-        container_id,
-        block_id,
-        index,
-        value,
-      } => {
-        if let Some(set) = self.find_set_mut(*container_id, *block_id) {
-          if undo {
-            if *index < set.parameters.len() {
-              set.parameters.remove(*index);
-            }
-          } else if *index <= set.parameters.len() {
-            set.parameters.insert(*index, value.clone());
-          }
-        }
-      }
-      SetCommand::RemoveParameter {
-        container_id,
-        block_id,
-        index,
-        value,
-      } => {
-        if let Some(set) = self.find_set_mut(*container_id, *block_id) {
-          if undo {
-            if *index <= set.parameters.len() {
-              set.parameters.insert(*index, value.clone());
-            }
-          } else if *index < set.parameters.len() {
-            set.parameters.remove(*index);
-          }
-        }
-      }
-    }
-  }
-
-  fn record_set_command(&mut self, command: SetCommand) {
-    self.set_history.command(command);
-  }
-
-  pub fn undo_set(&mut self) {
-    if let Some(command) = self.set_history.undo_command() {
-      self.apply_set_command(&command, true);
-    }
-  }
-
-  pub fn redo_set(&mut self) {
-    if let Some(command) = self.set_history.redo_command() {
-      self.apply_set_command(&command, false);
     }
   }
 
@@ -875,7 +721,54 @@ fn container_width(container: &Container) -> f32 {
   container.blocks.len().max(1) as f32 * BLOCK_WIDTH + CONTAINER_PADDING * 2.0
 }
 
-pub enum UiPropertiesCommand {}
+pub enum UiPropertiesCommand {
+  ChangeText {
+    container_id: usize,
+    block_id: usize,
+    value: String,
+  },
+  ChangeWait {
+    container_id: usize,
+    block_id: usize,
+    value: f32,
+  },
+  ChangeAnimation {
+    container_id: usize,
+    block_id: usize,
+    value: Rc<str>,
+  },
+  ChangeLoop {
+    container_id: usize,
+    block_id: usize,
+    value: bool,
+  },
+  ChangeView {
+    container_id: usize,
+    block_id: usize,
+    value: Rc<str>,
+  },
+  ChangeParameter {
+    container_id: usize,
+    block_id: usize,
+    parameter_index: usize,
+    value: Rc<str>,
+  },
+  AddParameter {
+    container_id: usize,
+    block_id: usize,
+    index: usize,
+    value: (Rc<str>, Rc<str>),
+  },
+  RemoveParameter {
+    container_id: usize,
+    block_id: usize,
+    index: usize,
+  },
+  RenameContainer {
+    container_id: usize,
+    value: String,
+  },
+}
 
 pub fn draw_properties(
   ui: &dear_imgui_rs::Ui,
@@ -884,31 +777,9 @@ pub fn draw_properties(
   empty_str: Rc<str>,
   noncontrol_str: Rc<str>,
   assets: &ProjectAssets,
-  state: &mut UiTimelineState,
-) {
-  /*
-  let is_window_focused = ui.is_window_focused_with_flags(FocusedFlags::ROOT_AND_CHILD_WINDOWS);
-
-  let clicked_undo = {
-    let _disabled = ui.begin_disabled_with_cond(state.set_history.done().is_empty());
-    (is_window_focused && ui.io().key_ctrl() && ui.is_key_pressed(dear_imgui_rs::Key::Z)) || ui.button("Undo")
-  };
-  if clicked_undo {
-    state.undo_set();
-  }
-
-  ui.same_line();
-
-  let clicked_redo = {
-    let _disabled = ui.begin_disabled_with_cond(state.set_history.undone().is_empty());
-
-    (is_window_focused && ui.io().key_ctrl() && ui.is_key_pressed(dear_imgui_rs::Key::Y)) || ui.button("Redo")
-  };
-  if clicked_redo {
-    state.redo_set();
-  }*/
-
-  let mut commands = Vec::new();
+  state: &UiTimelineState,
+) -> UiOutput {
+  let mut output = UiOutput::default();
 
   match selected {
     Selection::Block {
@@ -916,23 +787,45 @@ pub fn draw_properties(
       container_id,
       block_index,
     } => {
-      let block = &mut state.containers[container_index].blocks[block_index];
+      let block = &state.containers[container_index].blocks[block_index];
 
-      match &mut block.value {
+      match &block.value {
         TimelineBlockType::Text(text) => {
           ui.text("Text:");
           ui.same_line();
           ui.set_next_item_width(-1.0);
-          ui.input_text(format!("##{}_{}_text", container_id, block.id), text)
-            .build();
+          let mut value = text.clone();
+          if ui
+            .input_text(format!("##{}_{}_text", container_id, block.id), &mut value)
+            .build()
+          {
+            output
+              .commands
+              .push(UiCommand::Properties(UiPropertiesCommand::ChangeText {
+                container_id,
+                block_id: block.id,
+                value,
+              }));
+          }
         }
         TimelineBlockType::Wait(seconds) => {
           ui.text("Wait:");
           ui.same_line();
 
-          ui.input_float_config("##wait_seconds")
+          let mut value = *seconds;
+          if ui
+            .input_float_config("##wait_seconds")
             .step(0.10)
-            .build(seconds);
+            .build(&mut value)
+          {
+            output
+              .commands
+              .push(UiCommand::Properties(UiPropertiesCommand::ChangeWait {
+                container_id,
+                block_id: block.id,
+                value,
+              }));
+          }
 
           ui.same_line();
           ui.text("seconds");
@@ -947,32 +840,34 @@ pub fn draw_properties(
           // ANIMATION
           ui.text("Animation");
           ui.separator();
-          let before_loop = anim.1;
-          if ui.checkbox("Loop?", &mut anim.1) {
-            commands.push(SetCommand::ChangeLoop {
-              container_id,
-              block_id,
-              before: before_loop,
-              after: anim.1,
-            });
+          let mut looped = anim.1;
+          if ui.checkbox("Loop?", &mut looped) {
+            output
+              .commands
+              .push(UiCommand::Properties(UiPropertiesCommand::ChangeLoop {
+                container_id,
+                block_id,
+                value: looped,
+              }));
           }
           ui.same_line();
 
-          let before_animation = anim.0.clone();
+          let mut animation = anim.0.clone();
           if combo_box(
             ui,
-            &mut anim.0,
+            &mut animation,
             "##anim_combo",
             assets.motion_mgr.names().as_slice(),
             &unchanged_str,
             empty_str.clone(),
           ) {
-            commands.push(SetCommand::ChangeAnimation {
-              container_id,
-              block_id,
-              before: before_animation,
-              after: anim.0.clone(),
-            });
+            output.commands.push(UiCommand::Properties(
+              UiPropertiesCommand::ChangeAnimation {
+                container_id,
+                block_id,
+                value: animation,
+              },
+            ));
           }
 
           ui.text("View");
@@ -980,21 +875,22 @@ pub fn draw_properties(
 
           let keys: Vec<_> = assets.model_def.views.keys().collect();
           // VIEW
-          let before_view = view.clone();
+          let mut selected_view = view.clone();
           if combo_box(
             ui,
-            view,
+            &mut selected_view,
             "##view_combo",
             keys.as_slice(),
             &unchanged_str,
             empty_str.clone(),
           ) {
-            commands.push(SetCommand::ChangeView {
-              container_id,
-              block_id,
-              before: before_view,
-              after: view.clone(),
-            });
+            output
+              .commands
+              .push(UiCommand::Properties(UiPropertiesCommand::ChangeView {
+                container_id,
+                block_id,
+                value: selected_view,
+              }));
           }
 
           ui.spacing();
@@ -1003,7 +899,7 @@ pub fn draw_properties(
 
           let mut remove_index: Option<usize> = None;
 
-          for (idx, entry) in parameters.iter_mut().enumerate() {
+          for (idx, entry) in parameters.iter().enumerate() {
             let _id = ui.push_id(idx as i32);
 
             if ui.button("X") {
@@ -1028,15 +924,14 @@ pub fn draw_properties(
                   {
                     let selected = entry.1 == *value;
                     if ui.selectable_config(value).selected(selected).build() {
-                      let before = entry.1.clone();
-                      entry.1 = value.clone();
-                      commands.push(SetCommand::ChangeParameter {
-                        container_id,
-                        block_id,
-                        parameter_index: idx,
-                        before,
-                        after: entry.1.clone(),
-                      });
+                      output.commands.push(UiCommand::Properties(
+                        UiPropertiesCommand::ChangeParameter {
+                          container_id,
+                          block_id,
+                          parameter_index: idx,
+                          value: value.clone(),
+                        },
+                      ));
                     }
                   }
                 }
@@ -1046,14 +941,13 @@ pub fn draw_properties(
           }
 
           if let Some(idx) = remove_index {
-            let value = parameters[idx].clone();
-            parameters.remove(idx);
-            commands.push(SetCommand::RemoveParameter {
-              container_id,
-              block_id,
-              index: idx,
-              value,
-            });
+            output.commands.push(UiCommand::Properties(
+              UiPropertiesCommand::RemoveParameter {
+                container_id,
+                block_id,
+                index: idx,
+              },
+            ));
           }
 
           ui.spacing();
@@ -1072,13 +966,14 @@ pub fn draw_properties(
                   prop_value.values.iter().next().unwrap().0.clone(),
                 );
                 let index = parameters.len();
-                parameters.push(value.clone());
-                commands.push(SetCommand::AddParameter {
-                  container_id,
-                  block_id,
-                  index,
-                  value,
-                });
+                output
+                  .commands
+                  .push(UiCommand::Properties(UiPropertiesCommand::AddParameter {
+                    container_id,
+                    block_id,
+                    index,
+                    value,
+                  }));
                 ui.close_current_popup();
               }
             }
@@ -1088,17 +983,25 @@ pub fn draw_properties(
       }
     }
     Selection::Container { index } => {
-      let container = &mut state.containers[index];
+      let container = &state.containers[index];
       ui.text("Who?");
       ui.same_line();
-      ui.input_text(format!("##container_{}", container.id), &mut container.name)
-        .build();
+      let mut name = container.name.clone();
+      if ui
+        .input_text(format!("##container_{}", container.id), &mut name)
+        .build()
+      {
+        output.commands.push(UiCommand::Properties(
+          UiPropertiesCommand::RenameContainer {
+            container_id: container.id,
+            value: name,
+          },
+        ));
+      }
     }
   }
 
-  for command in commands {
-    state.record_set_command(command);
-  }
+  output
 }
 
 fn combo_box(
@@ -1252,4 +1155,128 @@ pub fn handle_ui_timeline_command(cmd: UiTimelineCommand, state: &mut UiState) {
       timeline_state.containers.insert(target_index, container);
     }
   }
+}
+
+pub fn handle_ui_properties_command(cmd: UiPropertiesCommand, state: &mut UiState) {
+  let Some(timeline) = state.graph_state.get_mut_selected_timeline() else {
+    return;
+  };
+
+  match cmd {
+    UiPropertiesCommand::ChangeText {
+      container_id,
+      block_id,
+      value,
+    } => {
+      if let Some(TimelineBlockType::Text(text)) =
+        find_block_value_mut(timeline, container_id, block_id)
+      {
+        *text = value;
+      }
+    }
+    UiPropertiesCommand::ChangeWait {
+      container_id,
+      block_id,
+      value,
+    } => {
+      if let Some(TimelineBlockType::Wait(seconds)) =
+        find_block_value_mut(timeline, container_id, block_id)
+      {
+        *seconds = value;
+      }
+    }
+    UiPropertiesCommand::ChangeAnimation {
+      container_id,
+      block_id,
+      value,
+    } => {
+      if let Some(TimelineBlockType::Set(set)) =
+        find_block_value_mut(timeline, container_id, block_id)
+      {
+        set.anim.0 = value;
+      }
+    }
+    UiPropertiesCommand::ChangeLoop {
+      container_id,
+      block_id,
+      value,
+    } => {
+      if let Some(TimelineBlockType::Set(set)) =
+        find_block_value_mut(timeline, container_id, block_id)
+      {
+        set.anim.1 = value;
+      }
+    }
+    UiPropertiesCommand::ChangeView {
+      container_id,
+      block_id,
+      value,
+    } => {
+      if let Some(TimelineBlockType::Set(set)) =
+        find_block_value_mut(timeline, container_id, block_id)
+      {
+        set.view = value;
+      }
+    }
+    UiPropertiesCommand::ChangeParameter {
+      container_id,
+      block_id,
+      parameter_index,
+      value,
+    } => {
+      if let Some(TimelineBlockType::Set(set)) =
+        find_block_value_mut(timeline, container_id, block_id)
+        && let Some((_, current)) = set.parameters.get_mut(parameter_index)
+      {
+        *current = value;
+      }
+    }
+    UiPropertiesCommand::AddParameter {
+      container_id,
+      block_id,
+      index,
+      value,
+    } => {
+      if let Some(TimelineBlockType::Set(set)) =
+        find_block_value_mut(timeline, container_id, block_id)
+        && index <= set.parameters.len()
+      {
+        set.parameters.insert(index, value);
+      }
+    }
+    UiPropertiesCommand::RemoveParameter {
+      container_id,
+      block_id,
+      index,
+    } => {
+      if let Some(TimelineBlockType::Set(set)) =
+        find_block_value_mut(timeline, container_id, block_id)
+        && index < set.parameters.len()
+      {
+        set.parameters.remove(index);
+      }
+    }
+    UiPropertiesCommand::RenameContainer {
+      container_id,
+      value,
+    } => {
+      if let Some(container) = timeline
+        .containers
+        .iter_mut()
+        .find(|c| c.id == container_id)
+      {
+        container.name = value;
+      }
+    }
+  }
+}
+
+fn find_block_value_mut(
+  state: &mut UiTimelineState,
+  container_id: usize,
+  block_id: usize,
+) -> Option<&mut TimelineBlockType> {
+  let container = state.containers.iter_mut().find(|c| c.id == container_id)?;
+  let block = container.blocks.iter_mut().find(|b| b.id == block_id)?;
+  Some(&mut block.value)
 }

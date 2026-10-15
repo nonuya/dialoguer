@@ -382,7 +382,7 @@ impl DialogPlayer {
             output.effects = effects;
             break output;
           }
-          _ if output.next_iter.node_cursor < skip => {
+          _ if output.next_iter.node_cursor <= skip => {
             iter = output.next_iter;
           }
           _ => {

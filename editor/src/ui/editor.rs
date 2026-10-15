@@ -7,7 +7,9 @@ use crate::{
     draw_graph, draw_graph_inspector, draw_timeline,
     graph::{UiGraphCommand, UiGraphState, handle_ui_graph_command},
     handle_ui_timeline_command,
-    timeline::{UiPropertiesCommand, UiTimelineCommand, draw_properties},
+    timeline::{
+      UiPropertiesCommand, UiTimelineCommand, draw_properties, handle_ui_properties_command,
+    },
   },
 };
 use dear_imgui_rs::{Condition, DockBuilder, SplitDirection, StyleVar, TextureId, WindowFlags};
@@ -206,7 +208,7 @@ pub fn draw_editor(
         };
 
         if let Some(selected) = timeline_state.get_selected() {
-          draw_properties(
+          let properties_output = draw_properties(
             ui,
             selected,
             state.unchanged_str.clone(),
@@ -215,12 +217,13 @@ pub fn draw_editor(
             assets,
             timeline_state,
           );
+
+          output.commands.extend(properties_output.commands);
         }
       });
     });
 
   // Draw Model
-  /*
   ui.window("Preview").build(|| {
     let available = ui.content_region_avail();
 
@@ -248,7 +251,6 @@ pub fn draw_editor(
       .uv1([1.0, 0.0])
       .build();
   });
-  */
 
   output
 }
@@ -260,6 +262,9 @@ pub fn handle_ui_command(cmd: UiCommand, state: &mut UiState) {
     }
     UiCommand::Timeline(timeline_cmd) => {
       handle_ui_timeline_command(timeline_cmd, state);
+    }
+    UiCommand::Properties(properties_cmd) => {
+      handle_ui_properties_command(properties_cmd, state);
     }
     _ => {
       unimplemented!("Implement this plz")
