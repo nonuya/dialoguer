@@ -5,7 +5,7 @@ use crate::{
     editor::{UiCommand, UiOutput},
   },
 };
-use dear_imgui_rs::{DrawListMut, FocusedFlags, Font, MouseButton, WindowFlags};
+use dear_imgui_rs::{DrawListMut, Font, MouseButton, WindowFlags};
 use std::rc::Rc;
 
 const BLOCK_WIDTH: f32 = 50.0;
