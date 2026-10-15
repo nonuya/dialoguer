@@ -2,7 +2,7 @@ use crate::{
   project::ProjectAssets,
   ui::editor::{UiCommand, UiOutput},
 };
-use dear_imgui_rs::{DrawListMut, Font, MouseButton, WindowFlags};
+use dear_imgui_rs::{DrawListMut, FocusedFlags, Font, MouseButton, WindowFlags};
 use std::rc::Rc;
 use undoredo::UndoRedo;
 
@@ -285,17 +285,6 @@ impl UiTimelineState {
 
     Self {
       containers,
-      drag: None,
-      container_drag: None,
-      selected_container_id: None,
-      selected_block: None,
-      set_history: UndoRedo::new(),
-    }
-  }
-
-  pub fn new_empty() -> Self {
-    Self {
-      containers: Vec::new(),
       drag: None,
       container_drag: None,
       selected_container_id: None,
@@ -883,13 +872,27 @@ pub fn draw_properties(
   assets: &ProjectAssets,
   state: &mut UiTimelineState,
 ) {
-  if ui.button("Undo Set") {
+  /*
+  let is_window_focused = ui.is_window_focused_with_flags(FocusedFlags::ROOT_AND_CHILD_WINDOWS);
+
+  let clicked_undo = {
+    let _disabled = ui.begin_disabled_with_cond(state.set_history.done().is_empty());
+    (is_window_focused && ui.io().key_ctrl() && ui.is_key_pressed(dear_imgui_rs::Key::Z)) || ui.button("Undo")
+  };
+  if clicked_undo {
     state.undo_set();
   }
+
   ui.same_line();
-  if ui.button("Redo Set") {
+
+  let clicked_redo = {
+    let _disabled = ui.begin_disabled_with_cond(state.set_history.undone().is_empty());
+
+    (is_window_focused && ui.io().key_ctrl() && ui.is_key_pressed(dear_imgui_rs::Key::Y)) || ui.button("Redo")
+  };
+  if clicked_redo {
     state.redo_set();
-  }
+  }*/
 
   let mut commands = Vec::new();
 

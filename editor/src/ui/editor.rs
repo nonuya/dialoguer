@@ -5,7 +5,7 @@ use crate::{
   runtime::EditorRuntime,
   ui::{
     draw_graph, draw_graph_inspector, draw_timeline,
-    graph::{UiGraphCommand, UiGraphState},
+    graph::{UiGraphCommand, UiGraphState, handle_ui_graph_command},
     timeline::{UiPropertiesCommand, UiTimelineCommand, draw_properties},
   },
 };
@@ -60,6 +60,7 @@ impl UiState {
       texture_id,
       layout_initialized: false,
       is_dialog_playing: false,
+      // history: UndoRedo::new(),
       graph_state,
       id_gen,
       node_editor,
@@ -218,7 +219,6 @@ pub fn draw_editor(
     });
 
   // Draw Model
-  /*
   ui.window("Preview").build(|| {
     let available = ui.content_region_avail();
 
@@ -245,7 +245,18 @@ pub fn draw_editor(
       .uv0([0.0, 1.0])
       .uv1([1.0, 0.0])
       .build();
-  });*/
+  });
 
   output
+}
+
+pub fn handle_ui_command(cmd: UiCommand, state: &mut UiState) {
+  match cmd {
+    UiCommand::Graph(graph_cmd) => {
+      handle_ui_graph_command(graph_cmd, state);
+    }
+    _ => {
+      unimplemented!("Implement this plz")
+    }
+  }
 }

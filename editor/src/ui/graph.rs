@@ -33,6 +33,7 @@ pub enum Node {
     input: PinId,
     output: PinId,
     position: [f32; 2],
+    dirty: bool,
   },
   Choicer {
     id: NodeId,
@@ -41,6 +42,7 @@ pub enum Node {
     input: PinId,
     outputs: Vec<PinId>,
     position: [f32; 2],
+    dirty: bool,
   },
 }
 
@@ -49,6 +51,13 @@ impl Node {
     match self {
       Node::Conversation { id, .. } => *id,
       Node::Choicer { id, .. } => *id,
+    }
+  }
+
+  pub fn dirty(&self) -> bool {
+    match self {
+      Node::Conversation { dirty, .. } => *dirty,
+      Node::Choicer { dirty, .. } => *dirty,
     }
   }
 
@@ -95,7 +104,6 @@ pub struct UiGraphState {
   links: Vec<Link>,
   flow_links: Vec<Link>,
   flow_link_editing: bool,
-  dirty: bool,
 }
 
 impl UiGraphState {
@@ -120,7 +128,6 @@ impl UiGraphState {
       links,
       flow_links,
       timeline_states,
-      dirty: true,
     }
   }
 
@@ -146,6 +153,7 @@ impl UiGraphState {
             input: id_gen.next_pin(),
             output: id_gen.next_pin(),
             position: [0.0, 0.0],
+            dirty: true,
           };
 
           let (input, output) = match &node {
@@ -176,6 +184,7 @@ impl UiGraphState {
             input,
             outputs: outputs.clone(),
             position: [0.0, 0.0],
+            dirty: true,
           };
 
           info_by_id.insert(name.clone(), NodeInfo { input, outputs });
@@ -483,7 +492,10 @@ impl UiGraphState {
         Node::Conversation {
           id, name, output, ..
         } => {
-          let timeline = self.timeline_states.get(id).context("Failed to get Timeline")?;
+          let timeline = self
+            .timeline_states
+            .get(id)
+            .context("Failed to get Timeline")?;
           let mut dialog = timeline.export_to_dialog();
 
           // Si tiene un nodo de salida
@@ -537,7 +549,10 @@ impl UiGraphState {
                 queue.push_back(next);
               }
               None => {
-                log::warn!("[Export] Skipping '{}' because it doesnt have an output node.", name);
+                log::warn!(
+                  "[Export] Skipping '{}' because it doesnt have an output node.",
+                  name
+                );
               }
             }
           }
@@ -566,12 +581,11 @@ impl UiGraphState {
       Node::Choicer { input, .. } => *input == to,
     })
   }
-
 }
 
 pub enum UiGraphCommand {
-  AddConversation { name: String },
-  AddChoicer { name: String },
+  AddConversation { name: String, position: [f32; 2] },
+  AddChoicer { name: String, position: [f32; 2] },
   RemoveNode { nodes_idx: usize },
   ToggleLinkEdit,
   RemoveChoicerOption { node_id: NodeId, option_idx: usize },
@@ -631,12 +645,18 @@ pub fn draw_graph(ui: &dear_imgui_rs::Ui, state: &mut UiState) -> UiOutput {
   if !state.graph_state.flow_link_editing {
     if ui.button("Add Conversation") {
       let name = format!("Conversation {}", state.id_gen.next());
-      add_effect(UiGraphCommand::AddConversation { name });
+      add_effect(UiGraphCommand::AddConversation {
+        name,
+        position: ui.mouse_pos(),
+      });
     }
     ui.same_line();
     if ui.button("Add Choicer") {
       let name = format!("Choicer {}", state.id_gen.next());
-      add_effect(UiGraphCommand::AddChoicer { name });
+      add_effect(UiGraphCommand::AddChoicer {
+        name,
+        position: ui.mouse_pos(),
+      });
     }
 
     if let Some(id) = state.graph_state.selected_node_id {
@@ -667,19 +687,29 @@ pub fn draw_graph(ui: &dear_imgui_rs::Ui, state: &mut UiState) -> UiOutput {
   // ==========================
   let editor = ui.node_editor(&state.node_editor, "DialogueGraph", [0.0, 0.0]);
 
-  if state.graph_state.dirty {
-    state.graph_state.dirty = false;
+  for node in &mut state.graph_state.nodes {
+    if !node.dirty() {
+      continue;
+    }
 
-    editor.clear_selection();
-
-    for node in &state.graph_state.nodes {
-      match node {
-        Node::Conversation { id, position, .. } => {
-          editor.set_node_position(*id, *position);
-        }
-        Node::Choicer { id, position, .. } => {
-          editor.set_node_position(*id, *position);
-        }
+    match node {
+      Node::Conversation {
+        id,
+        position,
+        dirty,
+        ..
+      } => {
+        *dirty = false;
+        editor.set_node_position(*id, *position);
+      }
+      Node::Choicer {
+        id,
+        position,
+        dirty,
+        ..
+      } => {
+        *dirty = false;
+        editor.set_node_position(*id, *position);
       }
     }
   }
@@ -883,5 +913,126 @@ fn normalize_link(nodes: &[Node], a: PinId, b: PinId) -> Option<(PinId, PinId)> 
     (Some(PinKind::Output), Some(PinKind::Input)) => Some((a, b)),
     (Some(PinKind::Input), Some(PinKind::Output)) => Some((b, a)),
     _ => None, // mismo tipo en ambos extremos, o pin desconocido: link inválido
+  }
+}
+
+pub fn handle_ui_graph_command(cmd: UiGraphCommand, state: &mut UiState) {
+  match cmd {
+    UiGraphCommand::AddConversation { name, position } => {
+      let node = Node::Conversation {
+        id: state.id_gen.next_node(),
+        name,
+        input: state.id_gen.next_pin(),
+        output: state.id_gen.next_pin(),
+        position,
+        dirty: true,
+      };
+
+      state.graph_state.nodes.push(node);
+    }
+    UiGraphCommand::AddChoicer { name, position } => {
+      let node = Node::Choicer {
+        id: state.id_gen.next_node(),
+        name,
+        options: vec![],
+        outputs: vec![],
+        input: state.id_gen.next_pin(),
+        position,
+        dirty: true,
+      };
+
+      state.graph_state.nodes.push(node);
+    }
+    UiGraphCommand::AddChoicerOption { node_id } => {
+      if let Some(Node::Choicer {
+        options, outputs, ..
+      }) = state
+        .graph_state
+        .nodes
+        .iter_mut()
+        .find(|n| n.id() == node_id)
+      {
+        options.push("Text".into());
+        outputs.push(state.id_gen.next_pin());
+      }
+    }
+    UiGraphCommand::RemoveNode { nodes_idx } => {
+      let pins: Vec<PinId> = match &state.graph_state.nodes[nodes_idx] {
+        Node::Conversation { input, output, .. } => {
+          vec![*input, *output]
+        }
+        Node::Choicer { input, outputs, .. } => {
+          let mut pins = Vec::with_capacity(outputs.len() + 1);
+          pins.push(*input);
+          pins.extend(outputs.iter().copied());
+          pins
+        }
+      };
+
+      let node = &state.graph_state.nodes[nodes_idx];
+
+      state.graph_state.timeline_states.remove(&node.id());
+      state
+        .graph_state
+        .links
+        .retain(|link| !pins.contains(&link.from) && !pins.contains(&link.to));
+      state
+        .graph_state
+        .flow_links
+        .retain(|link| !pins.contains(&link.from) && !pins.contains(&link.to));
+      state.graph_state.nodes.remove(nodes_idx);
+    }
+    UiGraphCommand::ToggleLinkEdit => {
+      state.graph_state.flow_link_editing = !state.graph_state.flow_link_editing;
+    }
+    UiGraphCommand::RemoveChoicerOption {
+      node_id,
+      option_idx,
+    } => {
+      if let Some(Node::Choicer {
+        options, outputs, ..
+      }) = state
+        .graph_state
+        .nodes
+        .iter_mut()
+        .find(|n| n.id() == node_id)
+      {
+        let pin = outputs.remove(option_idx);
+        options.remove(option_idx);
+        if state.graph_state.flow_link_editing {
+          state
+            .graph_state
+            .flow_links
+            .retain(|link| link.from != pin && link.to != pin);
+        } else {
+          state
+            .graph_state
+            .links
+            .retain(|link| link.from != pin && link.to != pin);
+        }
+      }
+    }
+    UiGraphCommand::AddLink { from, to } => {
+      let link = Link {
+        id: state.id_gen.next_link(),
+        from,
+        to,
+      };
+      state.graph_state.links.push(link);
+    }
+    UiGraphCommand::AddFlowLink { from, to } => {
+      let link = Link {
+        id: state.id_gen.next_link(),
+        from,
+        to,
+      };
+      state.graph_state.flow_links.push(link);
+    }
+    UiGraphCommand::RemoveLink { links_idx } => {
+      state.graph_state.links.remove(links_idx);
+    }
+    UiGraphCommand::RemoveFlowLink { flow_links_idx } => {
+      state.graph_state.flow_links.remove(flow_links_idx);
+    }
   }
 }

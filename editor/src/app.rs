@@ -4,7 +4,7 @@ use std::{path::PathBuf, rc::Rc};
 use crate::{
   project::{ProjectAssets, ProjectManifest},
   runtime::EditorRuntime,
-  ui::{UiCommand, UiState, draw_editor},
+  ui::{UiCommand, UiState, draw_editor, handle_ui_command},
 };
 use winit::{
   event::KeyEvent,
@@ -41,9 +41,9 @@ impl App {
       .runtime
       .dialog_player
       .as_ref()
-      .is_some_and(|p| p.is_waiting())
+      .is_some_and(|p| p.is_waiting() && !self.runtime.animator.is_timer_playing())
     {
-      self.handle_dialog_command(PlayerCommand::Tick(deltatime));
+      self.handle_player_command(PlayerCommand::Tick(deltatime));
     }
 
     if self
@@ -52,7 +52,7 @@ impl App {
       .as_ref()
       .is_some_and(|p| p.is_next())
     {
-      self.handle_dialog_command(PlayerCommand::Continue);
+      self.handle_player_command(PlayerCommand::Continue);
     }
 
     self
@@ -61,7 +61,7 @@ impl App {
       .update(deltatime, &mut self.runtime.model, &self.assets.model_def);
   }
 
-  fn handle_dialog_command(&mut self, command: PlayerCommand) {
+  fn handle_player_command(&mut self, command: PlayerCommand) {
     let Some(player) = self.runtime.dialog_player.as_mut() else {
       return;
     };
@@ -148,7 +148,7 @@ impl App {
                     self.runtime.dialog_player =
                       Some(DialogPlayer::new(name.as_str().into(), entry_point));
 
-                    self.handle_dialog_command(PlayerCommand::Start(skip));
+                    self.handle_player_command(PlayerCommand::Start(skip));
                   }
                   None => {
                     log::warn!("[Export] Entry point Node {name} doesnt exists")
@@ -162,12 +162,16 @@ impl App {
         UiCommand::StopDialog => {
           self.ui_state.is_dialog_playing = false;
           self.ui_state.current_container_index = None;
+          self.runtime.dialog_player = None;
+          self.runtime.animator.clear_motion();
         }
-        _ => unimplemented!("unimplemented cmd"),
+        other => {
+          handle_ui_command(other, &mut self.ui_state);
+        }
       }
     }
 
-    // self.runtime.draw_model();
+    self.runtime.draw_model();
   }
 
   pub fn resize(&mut self, width: u32, height: u32) {}
@@ -176,14 +180,14 @@ impl App {
     if !event.state.is_pressed() {
       match event.physical_key {
         PhysicalKey::Code(KeyCode::Space) => {
-          self.handle_dialog_command(PlayerCommand::Continue);
+          self.handle_player_command(PlayerCommand::Continue);
         }
-        PhysicalKey::Code(KeyCode::Digit1) => self.handle_dialog_command(PlayerCommand::Chose(0)),
-        PhysicalKey::Code(KeyCode::Digit2) => self.handle_dialog_command(PlayerCommand::Chose(1)),
-        PhysicalKey::Code(KeyCode::Digit3) => self.handle_dialog_command(PlayerCommand::Chose(2)),
-        PhysicalKey::Code(KeyCode::Digit4) => self.handle_dialog_command(PlayerCommand::Chose(3)),
-        PhysicalKey::Code(KeyCode::Digit5) => self.handle_dialog_command(PlayerCommand::Chose(4)),
-        PhysicalKey::Code(KeyCode::Digit6) => self.handle_dialog_command(PlayerCommand::Chose(5)),
+        PhysicalKey::Code(KeyCode::Digit1) => self.handle_player_command(PlayerCommand::Chose(0)),
+        PhysicalKey::Code(KeyCode::Digit2) => self.handle_player_command(PlayerCommand::Chose(1)),
+        PhysicalKey::Code(KeyCode::Digit3) => self.handle_player_command(PlayerCommand::Chose(2)),
+        PhysicalKey::Code(KeyCode::Digit4) => self.handle_player_command(PlayerCommand::Chose(3)),
+        PhysicalKey::Code(KeyCode::Digit5) => self.handle_player_command(PlayerCommand::Chose(4)),
+        PhysicalKey::Code(KeyCode::Digit6) => self.handle_player_command(PlayerCommand::Chose(5)),
         _ => {}
       }
     }

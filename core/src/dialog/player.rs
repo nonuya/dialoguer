@@ -350,15 +350,40 @@ impl DialogPlayer {
       loop {
         let mut output = consume_iter(iter, model_definition, dialog_mgr, motion_mgr, animator);
 
-        effects.append(&mut output.effects);
+        let mut new_effects = if skip > 0 {
+          output
+            .effects
+            .into_iter()
+            // No text
+            .filter(|e| !matches!(e, PlayerEffect::Text(..)))
+            // Immediate Parameters
+            .map(|e| match e {
+              PlayerEffect::SetParameterChange { changes, .. } => {
+                PlayerEffect::SetParameterChange {
+                  changes,
+                  is_deferred: false,
+                }
+              }
+              PlayerEffect::RemoveEnum { name, .. } => PlayerEffect::RemoveEnum {
+                name,
+                is_deferred: false,
+              },
+              _ => e,
+            })
+            .collect()
+        } else {
+          output.effects
+        };
+
+        effects.append(&mut new_effects);
 
         match output.result {
           ConsumeResult::Jump(..) | ConsumeResult::Finished => {
             output.effects = effects;
             break output;
           }
-          _ if output.next_iter.node_cursor <= skip => {
-            iter = output.next_iter; 
+          _ if output.next_iter.node_cursor < skip => {
+            iter = output.next_iter;
           }
           _ => {
             output.effects = effects;

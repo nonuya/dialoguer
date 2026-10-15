@@ -1,6 +1,5 @@
 use std::{
   collections::{HashMap, VecDeque},
-  path::Path,
   rc::Rc,
 };
 
@@ -165,7 +164,7 @@ impl ParameterState {
         } => {
           if actual != target {
             let delta = *target - *actual;
-            let step = *step * deltatime * 40.0;
+            let step = *step * deltatime * 60.0;
 
             if delta.abs() <= step {
               *actual = *target;
@@ -277,7 +276,6 @@ impl Animator {
     self.motion = None;
   }
 
-  // FIXME: Hay un Delay en Wait, no sé si termina el Wait y se espera unos microsegundos para empezar
   pub fn update(
     &mut self,
     deltatime: f32,
